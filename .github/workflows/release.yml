@@ -35,11 +35,11 @@ jobs:
 
       - name: Verify app and DMG
         run: |
-          codesign --verify --strict build/release/MenuPulse.app
+          codesign --verify --strict "build/release/Menu Pulse.app"
           hdiutil verify dist/MenuPulse.dmg
-          file build/release/MenuPulse.app/Contents/MacOS/MenuPulse
-          otool -L build/release/MenuPulse.app/Contents/MacOS/MenuPulse
-          ! otool -L build/release/MenuPulse.app/Contents/MacOS/MenuPulse | grep -q '/usr/lib/swift'
+          file "build/release/Menu Pulse.app/Contents/MacOS/MenuPulse"
+          otool -L "build/release/Menu Pulse.app/Contents/MacOS/MenuPulse"
+          ! otool -L "build/release/Menu Pulse.app/Contents/MacOS/MenuPulse" | grep -q '/usr/lib/swift'
 
       - name: Create checksum
         run: |

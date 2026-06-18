@@ -39,8 +39,8 @@ This app is not notarized by Apple yet, so macOS may show a warning on first lau
 If macOS blocks it, run:
 
 ```zsh
-sudo xattr -dr com.apple.quarantine /Applications/MenuPulse.app
-open /Applications/MenuPulse.app
+sudo xattr -dr com.apple.quarantine "/Applications/Menu Pulse.app"
+open "/Applications/Menu Pulse.app"
 ```
 
 ## License
@@ -122,7 +122,7 @@ Scripts/
 
 | Script | Use it for |
 | --- | --- |
-| `Scripts/build-app.sh` | Builds the Objective-C source into `build/release/MenuPulse.app`. Use it for local development checks. |
+| `Scripts/build-app.sh` | Builds the Objective-C source into `build/release/Menu Pulse.app`. Use it for local development checks. |
 | `Scripts/build-dmg.sh` | Rebuilds the app and creates `dist/MenuPulse.dmg`. Use it to check the distributable file. |
 | `Scripts/install.sh` | Installs the app to `~/Applications` and sets it to open automatically when you log in. |
 | `Scripts/uninstall.sh` | Removes the installed app and the login auto-start setting. |

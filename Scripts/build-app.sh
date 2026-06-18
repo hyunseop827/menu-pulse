@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD_DIR="$ROOT_DIR/build/release"
-APP_PATH="$BUILD_DIR/MenuPulse.app"
+APP_PATH="$BUILD_DIR/Menu Pulse.app"
 BIN_PATH="$APP_PATH/Contents/MacOS/MenuPulse"
 ARCH="${ARCH:-arm64}"
 SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"

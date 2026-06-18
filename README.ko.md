@@ -37,8 +37,8 @@ RAM: 63%    DISK: 87%
 macOS가 막으면 아래를 실행하면 됩니다.
 
 ```zsh
-sudo xattr -dr com.apple.quarantine /Applications/MenuPulse.app
-open /Applications/MenuPulse.app
+sudo xattr -dr com.apple.quarantine "/Applications/Menu Pulse.app"
+open "/Applications/Menu Pulse.app"
 ```
 
 ## 라이선스
@@ -120,7 +120,7 @@ Scripts/
 
 | Script | 용도 |
 | --- | --- |
-| `Scripts/build-app.sh` | Objective-C 소스를 빌드해서 `build/release/MenuPulse.app`을 만듭니다. 개발 중 실행 확인에 사용합니다. |
+| `Scripts/build-app.sh` | Objective-C 소스를 빌드해서 `build/release/Menu Pulse.app`을 만듭니다. 개발 중 실행 확인에 사용합니다. |
 | `Scripts/build-dmg.sh` | 앱을 다시 빌드한 뒤 `dist/MenuPulse.dmg`를 만듭니다. 배포용 파일을 확인할 때 사용합니다. |
 | `Scripts/install.sh` | 앱을 `~/Applications`에 설치하고, Mac 로그인 시 자동으로 실행되도록 설정합니다. |
 | `Scripts/uninstall.sh` | 설치된 앱과 로그인 자동 실행 설정을 제거합니다. |

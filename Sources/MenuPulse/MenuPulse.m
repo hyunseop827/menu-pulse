@@ -101,7 +101,7 @@ static NSArray<NSNumber *> *MPRefreshChoices(void) {
     button.imagePosition = NSImageOnly;
     button.target = self;
     button.action = @selector(showSettings);
-    button.toolTip = @"MenuPulse Settings";
+    button.toolTip = @"Menu Pulse Settings";
 
     [self refreshWithForce:YES];
     [self prepareStartupWarmUp];
@@ -201,7 +201,7 @@ static NSArray<NSNumber *> *MPRefreshChoices(void) {
                   styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable)
                     backing:NSBackingStoreBuffered
                       defer:NO];
-    window.title = @"MenuPulse Settings";
+    window.title = @"Menu Pulse Settings";
     window.releasedWhenClosed = NO;
     window.delegate = self;
     [window center];
@@ -709,7 +709,7 @@ static NSArray<NSNumber *> *MPRefreshChoices(void) {
 }
 
 - (NSString *)statusTooltip {
-    NSMutableArray<NSString *> *lines = [NSMutableArray arrayWithObject:@"MenuPulse"];
+    NSMutableArray<NSString *> *lines = [NSMutableArray arrayWithObject:@"Menu Pulse"];
 
     if (self.showCPU) {
         [lines addObject:[NSString stringWithFormat:@"CPU: %@ (every %@)",

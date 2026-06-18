@@ -2,8 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-BUILD_APP_PATH="$ROOT_DIR/build/release/MenuPulse.app"
-INSTALL_APP_PATH="$HOME/Applications/MenuPulse.app"
+BUILD_APP_PATH="$ROOT_DIR/build/release/Menu Pulse.app"
+INSTALL_APP_PATH="$HOME/Applications/Menu Pulse.app"
 BIN_PATH="$INSTALL_APP_PATH/Contents/MacOS/MenuPulse"
 PLIST_PATH="$HOME/Library/LaunchAgents/dev.hyunseop.MenuPulse.plist"
 LABEL="dev.hyunseop.MenuPulse"

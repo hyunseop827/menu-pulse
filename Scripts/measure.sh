@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 DURATION="${DURATION:-30}"
 INTERVAL="${INTERVAL:-3}"
-APP_PATH="$ROOT_DIR/build/release/MenuPulse.app"
+APP_PATH="$ROOT_DIR/build/release/Menu Pulse.app"
 PID="${PID:-}"
 STARTED_APP=0
 
