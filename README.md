@@ -39,7 +39,7 @@ This app is not notarized by Apple yet, so macOS may show a warning on first lau
 If macOS blocks it, run:
 
 ```zsh
-xattr -dr com.apple.quarantine /Applications/MenuPulse.app
+sudo xattr -dr com.apple.quarantine /Applications/MenuPulse.app
 open /Applications/MenuPulse.app
 ```
 
@@ -57,6 +57,8 @@ See [LICENSE](LICENSE) for details.
 - `RAM`: on by default
 - `TEMP`: optional, off by default, Celsius/Fahrenheit
 - `DISK`: optional, off by default
+
+RAM is calculated close to Activity Monitor's `Memory Used`: app memory + wired memory + compressed memory.
 
 Temperature uses IOHID first, then falls back to SMC. It can work on many Apple Silicon Macs, but it is not guaranteed on every macOS/device combination.
 

@@ -83,14 +83,18 @@ static uint64_t MPDiffTicks(uint32_t current, uint32_t previous) {
 
     uint64_t pageSize = (uint64_t)vm_kernel_page_size;
     uint64_t total = [[NSProcessInfo processInfo] physicalMemory];
-    uint64_t free = (uint64_t)(stats.free_count + stats.speculative_count) * pageSize;
-    uint64_t used = total > free ? total - free : 0;
+    uint64_t appPages = (uint64_t)stats.internal_page_count;
+    uint64_t wiredPages = (uint64_t)stats.wire_count;
+    uint64_t compressedPages = (uint64_t)stats.compressor_page_count;
+    uint64_t used = (appPages + wiredPages + compressedPages) * pageSize;
 
     if (total == 0) {
         return nil;
     }
 
-    return @(((double)used / (double)total) * 100.0);
+    double percent = (double)used / (double)total * 100.0;
+    percent = fmax(0.0, fmin(100.0, percent));
+    return @(percent);
 }
 
 @end

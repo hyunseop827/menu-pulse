@@ -37,7 +37,7 @@ RAM: 63%    DISK: 87%
 macOS가 막으면 아래를 실행하면 됩니다.
 
 ```zsh
-xattr -dr com.apple.quarantine /Applications/MenuPulse.app
+sudo xattr -dr com.apple.quarantine /Applications/MenuPulse.app
 open /Applications/MenuPulse.app
 ```
 
@@ -55,6 +55,8 @@ MIT 라이선스입니다.
 - `RAM`: 기본 ON
 - `TEMP`: 선택 기능, 기본 OFF, 섭씨/화씨 지원
 - `DISK`: 선택 기능, 기본 OFF
+
+RAM은 macOS 활성 상태 보기의 `Memory Used`에 가깝게, 앱 메모리 + 시스템 고정 메모리 + 압축 메모리 기준으로 계산합니다.
 
 온도는 IOHID를 먼저 읽고, 실패하면 SMC를 시도합니다.   
 많은 Apple Silicon Mac에서 동작할 수 있지만, macOS 버전이나 기기 조합에 따라 항상 보장되지는 않습니다.  
