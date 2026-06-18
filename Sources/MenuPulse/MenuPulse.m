@@ -634,7 +634,7 @@ static NSArray<NSNumber *> *MPRefreshChoices(void) {
 
     NSUInteger count = MIN((NSUInteger)2, rows.count);
     for (NSUInteger index = 0; index < count; index += 1) {
-        CGFloat y = index == 0 ? 12.0 : 1.0;
+        CGFloat y = index == 0 ? 10.5 : -0.5;
         [rows[index] drawAtPoint:NSMakePoint(0, y) withAttributes:attributes];
     }
 
