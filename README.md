@@ -97,10 +97,33 @@ Menu Pulse is not trying to be a feature-heavy monitoring app. It is for checkin
 - Uses one lightweight timer to refresh only what is due
 - Uses the native macOS login item API
 
-If you want to benchmark it yourself:
+### Measured Benchmark
+
+Measured with Menu Pulse `1.1.1` on July 28, 2026.
+
+- MacBook Air with an 8-core Apple M1
+- 16GB memory and 256GB SSD
+- macOS 26.5.2
+- 30-second warm-up after launch
+- 20 samples over 60 seconds at 3-second intervals
+
+| Enabled metrics | CPU average | CPU maximum | RSS average | RSS maximum | Private dirty |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| CPU + RAM (default) | 0.060% | 1.200% | 39.6MB | 39.7MB | 9.9MB |
+| CPU + RAM + TEMP + DISK | 0.140% | 1.600% | 38.0MB | 38.1MB | 10.4MB |
+
+- Installed app size: approximately 624KB
+- Release DMG size: approximately 960KB
+
+RSS includes shared system frameworks used by the app.
+For example, the default configuration reported 39.6MB RSS, while private dirty memory, which is closer to app-specific changed memory, was 9.9MB.
+The CPU maximum is a short burst while metrics refresh.
+Results can vary with other running processes and the macOS cache state.
+
+To reproduce the measurement, launch the app, wait 30 seconds, and run:
 
 ```sh
-Scripts/measure.sh
+DURATION=60 INTERVAL=3 Scripts/measure.sh
 ```
 
 ## Development
