@@ -17,6 +17,18 @@ RAM: 63%    DISK: 87%
 
 **macOS 13 이상 Apple Silicon Mac 전용**으로, **핵심 기능** + **적은 리소스 사용량**이 컨셉입니다.
 
+## 화면
+
+<p align="center">
+  <img src="menupulse-menubar.png" alt="CPU, RAM, TEMP, DISK를 표시하는 Menu Pulse 메뉴바" width="296">
+</p>
+<p align="center"><sub>메뉴바 모니터링</sub></p>
+
+<p align="center">
+  <img src="menupulse-setting.png" alt="Menu Pulse 지표와 로그인 항목 설정 창" width="600">
+</p>
+<p align="center"><sub>간단한 지표 및 로그인 설정</sub></p>
+
 ## 다운로드
 
 [최신 DMG 다운로드](https://github.com/hyunseop827/menu-pulse/releases/latest/download/MenuPulse.dmg)

@@ -17,6 +17,17 @@ RAM: 63%    DISK: 87%
 
 Menu Pulse is built for **Apple Silicon Macs running macOS 13 or later**, with **core metrics** and **low resource usage** as the main idea.
 
+## Screenshots
+
+<p align="center">
+  <img src="menupulse-menubar.png" alt="Menu Pulse menu bar showing CPU, RAM, TEMP, and DISK" width="296">
+</p>
+<p align="center"><sub>Menu bar monitoring</sub></p>
+
+<p align="center">
+  <img src="menupulse-setting.png" alt="Menu Pulse metric and login item settings window" width="600">
+</p>
+<p align="center"><sub>Simple metric and login settings</sub></p>
 
 ## Download
 
