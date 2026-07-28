@@ -8,10 +8,10 @@
 
 This is not a full monitoring dashboard. It is a small menu bar app for checking only the numbers you actually need.
 
-By default it shows `CPU` and `RAM`. You can also enable `HOT` (the hottest available sensor) and `DISK`.
+By default it shows `CPU` and `RAM`. You can also enable `TEMP` (temperature) and `DISK`.
 
 ```text
-CPU: 12%    HOT: 52°C
+CPU: 12%    TEMP: 52°C
 RAM: 63%    DISK: 87%
 ```
 
@@ -53,21 +53,21 @@ See [LICENSE](LICENSE) for details.
 
 - `CPU`: on by default
 - `RAM`: on by default
-- `HOT`: optional, off by default, Celsius/Fahrenheit
+- `TEMP`: optional, off by default, Celsius/Fahrenheit
 - `DISK`: optional, off by default
 
 RAM is calculated close to Activity Monitor's `Memory Used`: app memory + wired memory + compressed memory.
 
 Each temperature refresh compares every available IOHID sensor. If IOHID fails, it compares every supported SMC key.
-The hottest valid reading is shown as `HOT`. It is not guaranteed on every device combination.
-If no temperature can be read, it is shown as `HOT:--°C`.
+The hottest valid reading is shown as `TEMP`. It is not guaranteed on every device combination.
+If no temperature can be read, it is shown as `TEMP:--°C`.
 
 Default refresh intervals:
 
 ```text
 CPU  10s
 RAM  10s
-HOT  30s
+TEMP 30s
 DISK 300s
 ```
 
@@ -82,7 +82,7 @@ Menu Pulse is not trying to be a feature-heavy monitoring app. It is for checkin
 - No history storage or dashboard
 - No Dock icon while running
 - Only reads the metrics you enable
-- Does not read temperature sensors when `HOT` is off
+- Does not read temperature sensors when `TEMP` is off
 - Uses one lightweight timer to refresh only what is due
 - Uses the native macOS login item API
 

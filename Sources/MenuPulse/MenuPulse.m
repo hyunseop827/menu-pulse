@@ -169,7 +169,7 @@ static NSString * const MPTemperatureUnitFahrenheit = @"F";
 
     NSButton *cpu = [NSButton checkboxWithTitle:@"CPU usage" target:self action:@selector(settingsChanged)];
     NSButton *ram = [NSButton checkboxWithTitle:@"RAM usage" target:self action:@selector(settingsChanged)];
-    NSButton *temperature = [NSButton checkboxWithTitle:@"Hottest temperature" target:self action:@selector(settingsChanged)];
+    NSButton *temperature = [NSButton checkboxWithTitle:@"Temperature" target:self action:@selector(settingsChanged)];
     NSButton *disk = [NSButton checkboxWithTitle:@"Disk usage" target:self action:@selector(settingsChanged)];
     NSButton *login = [NSButton checkboxWithTitle:@"Open at login" target:self action:@selector(loginChanged)];
     NSPopUpButton *temperatureUnitPopup = [self makeTemperatureUnitPopup];
@@ -532,7 +532,7 @@ static NSString * const MPTemperatureUnitFahrenheit = @"F";
     NSString *cpu = self.showCPU ? [NSString stringWithFormat:@"CPU:%@", [self formatPercent:self.cachedCPU]] : nil;
     NSString *ram = self.showRAM ? [NSString stringWithFormat:@"RAM:%@", [self formatPercent:self.cachedRAM]] : nil;
     NSString *temperature = self.showTemperature ?
-        [NSString stringWithFormat:@"HOT:%@", [self formatTemperature:self.cachedTemperature]] : nil;
+        [NSString stringWithFormat:@"TEMP:%@", [self formatTemperature:self.cachedTemperature]] : nil;
     NSString *disk = self.showDisk ? [NSString stringWithFormat:@"DISK:%@", [self formatPercent:self.cachedDisk]] : nil;
 
     NSArray<NSString *> *leftColumn = [self compactValues:@[cpu ?: NSNull.null, ram ?: NSNull.null]];
@@ -637,7 +637,7 @@ static NSString * const MPTemperatureUnitFahrenheit = @"F";
         NSString *temperature = self.temperatureReadInFlight && !self.cachedTemperature ?
             @"warming up" :
             [self formatTemperature:self.cachedTemperature];
-        [lines addObject:[NSString stringWithFormat:@"Hottest sensor: %@ (every %@)",
+        [lines addObject:[NSString stringWithFormat:@"TEMP (hottest sensor): %@ (every %@)",
                           temperature,
                           [self formatInterval:MPDefaultTemperatureRefreshInterval]]];
     }
