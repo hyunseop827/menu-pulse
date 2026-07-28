@@ -1,123 +1,141 @@
 #import "LoginItemManager.h"
 
+#import <ServiceManagement/ServiceManagement.h>
 #import <unistd.h>
 
-static NSString * const MPLoginItemLabel = @"dev.hyunseop.MenuPulse";
-
-@interface MPLoginItemManager ()
-@property(nonatomic, strong) NSFileManager *fileManager;
-@end
+static NSString * const MPLegacyLoginItemLabel = @"dev.hyunseop.MenuPulse";
 
 @implementation MPLoginItemManager
 
 - (instancetype)init {
     self = [super init];
     if (self) {
-        _fileManager = [NSFileManager defaultManager];
+        [self migrateLegacyLoginItemIfPossible];
     }
     return self;
 }
 
 - (BOOL)isEnabled {
-    NSString *executablePath = [NSBundle mainBundle].executablePath;
-    NSData *data = [NSData dataWithContentsOfURL:[self launchAgentURL]];
-    if (!executablePath || !data) {
-        return NO;
-    }
+    return SMAppService.mainAppService.status == SMAppServiceStatusEnabled;
+}
 
-    NSError *error = nil;
-    id plist = [NSPropertyListSerialization propertyListWithData:data
-                                                         options:0
-                                                          format:nil
-                                                           error:&error];
-    if (error || ![plist isKindOfClass:[NSDictionary class]]) {
-        return NO;
-    }
-
-    NSDictionary *dictionary = (NSDictionary *)plist;
-    NSArray *arguments = dictionary[@"ProgramArguments"];
-    return [dictionary[@"Label"] isEqualToString:MPLoginItemLabel] &&
-        [arguments isKindOfClass:[NSArray class]] &&
-        arguments.count > 0 &&
-        [arguments.firstObject isEqualToString:executablePath];
+- (BOOL)requiresApproval {
+    return SMAppService.mainAppService.status == SMAppServiceStatusRequiresApproval;
 }
 
 - (BOOL)setEnabled:(BOOL)enabled {
-    return enabled ? [self enable] : [self disable];
-}
+    SMAppService *service = SMAppService.mainAppService;
 
-- (BOOL)enable {
-    NSString *executablePath = [NSBundle mainBundle].executablePath;
-    if (!executablePath) {
-        return NO;
+    if (enabled) {
+        if (service.status == SMAppServiceStatusEnabled) {
+            [self removeLegacyLoginItem];
+            return YES;
+        }
+
+        NSError *error = nil;
+        if (![service registerAndReturnError:&error]) {
+            return NO;
+        }
+
+        BOOL didEnable = service.status == SMAppServiceStatusEnabled;
+        if (didEnable) {
+            [self removeLegacyLoginItem];
+        }
+        return didEnable;
     }
 
-    NSURL *launchAgentURL = [self launchAgentURL];
-    NSError *error = nil;
-    if (![self.fileManager createDirectoryAtURL:launchAgentURL.URLByDeletingLastPathComponent
-                    withIntermediateDirectories:YES
-                                     attributes:nil
-                                          error:&error]) {
-        return NO;
+    if (service.status == SMAppServiceStatusNotRegistered) {
+        return [self removeLegacyLoginItem];
     }
-
-    NSDictionary *plist = @{
-        @"Label": MPLoginItemLabel,
-        @"ProgramArguments": @[executablePath],
-        @"RunAtLoad": @YES,
-        @"KeepAlive": @NO,
-        @"StandardOutPath": @"/tmp/MenuPulse.out.log",
-        @"StandardErrorPath": @"/tmp/MenuPulse.err.log",
-    };
-
-    NSData *data = [NSPropertyListSerialization dataWithPropertyList:plist
-                                                              format:NSPropertyListXMLFormat_v1_0
-                                                             options:0
-                                                               error:&error];
-    if (!data) {
-        return NO;
-    }
-
-    return [data writeToURL:launchAgentURL options:NSDataWritingAtomic error:&error];
-}
-
-- (BOOL)disable {
-    [self runLaunchctlWithArguments:@[@"bootout", [self guiDomain], [self launchAgentURL].path]];
 
     NSError *error = nil;
-    NSURL *launchAgentURL = [self launchAgentURL];
-    if ([self.fileManager fileExistsAtPath:launchAgentURL.path]) {
-        return [self.fileManager removeItemAtURL:launchAgentURL error:&error];
+    if (![service unregisterAndReturnError:&error]) {
+        return NO;
     }
 
-    return YES;
+    BOOL didDisable = service.status != SMAppServiceStatusEnabled;
+    return didDisable && [self removeLegacyLoginItem];
 }
 
-- (NSURL *)launchAgentURL {
-    return [[[[self.fileManager homeDirectoryForCurrentUser]
-        URLByAppendingPathComponent:@"Library"]
-        URLByAppendingPathComponent:@"LaunchAgents"]
-        URLByAppendingPathComponent:[NSString stringWithFormat:@"%@.plist", MPLoginItemLabel]];
+- (void)openSystemSettings {
+    [SMAppService openSystemSettingsLoginItems];
 }
 
-- (NSString *)guiDomain {
-    return [NSString stringWithFormat:@"gui/%d", getuid()];
+- (void)migrateLegacyLoginItemIfPossible {
+    if (![self isStableInstallationLocation]) {
+        return;
+    }
+
+    NSURL *legacyURL = [self legacyLoginItemURL];
+    NSString *legacyPath = legacyURL.path;
+    if (!legacyPath ||
+        ![[NSFileManager defaultManager] fileExistsAtPath:legacyPath]) {
+        return;
+    }
+
+    SMAppService *service = SMAppService.mainAppService;
+    if (service.status == SMAppServiceStatusNotRegistered) {
+        NSError *error = nil;
+        [service registerAndReturnError:&error];
+    }
+
+    if (service.status == SMAppServiceStatusEnabled) {
+        [self removeLegacyLoginItem];
+    }
 }
 
-- (BOOL)runLaunchctlWithArguments:(NSArray<NSString *> *)arguments {
+- (BOOL)isStableInstallationLocation {
+    NSString *bundlePath = NSBundle.mainBundle.bundlePath.stringByStandardizingPath;
+    if (!bundlePath) {
+        return NO;
+    }
+
+    NSString *userApplications = [[[[NSFileManager defaultManager] homeDirectoryForCurrentUser]
+        URLByAppendingPathComponent:@"Applications"
+                        isDirectory:YES].path stringByStandardizingPath];
+    return [bundlePath hasPrefix:@"/Applications/"] ||
+        (userApplications && [bundlePath hasPrefix:
+            [userApplications stringByAppendingString:@"/"]]);
+}
+
+- (BOOL)removeLegacyLoginItem {
+    NSURL *legacyURL = [self legacyLoginItemURL];
+    NSString *legacyPath = legacyURL.path;
+    if (!legacyPath) {
+        return NO;
+    }
+
+    NSFileManager *fileManager = [NSFileManager defaultManager];
+    if (![fileManager fileExistsAtPath:legacyPath]) {
+        return YES;
+    }
+
     NSTask *task = [[NSTask alloc] init];
     task.executableURL = [NSURL fileURLWithPath:@"/bin/launchctl"];
-    task.arguments = arguments;
+    task.arguments = @[
+        @"bootout",
+        [NSString stringWithFormat:@"gui/%d", getuid()],
+        legacyPath,
+    ];
     task.standardOutput = [NSPipe pipe];
     task.standardError = [NSPipe pipe];
 
     NSError *error = nil;
-    if (![task launchAndReturnError:&error]) {
-        return NO;
+    if ([task launchAndReturnError:&error]) {
+        [task waitUntilExit];
     }
 
-    [task waitUntilExit];
-    return task.terminationStatus == 0;
+    return [fileManager removeItemAtURL:legacyURL error:&error];
+}
+
+- (NSURL *)legacyLoginItemURL {
+    NSURL *libraryURL = [[[NSFileManager defaultManager] homeDirectoryForCurrentUser]
+        URLByAppendingPathComponent:@"Library"
+                        isDirectory:YES];
+    NSURL *agentsURL = [libraryURL URLByAppendingPathComponent:@"LaunchAgents"
+                                                   isDirectory:YES];
+    return [agentsURL URLByAppendingPathComponent:
+        [NSString stringWithFormat:@"%@.plist", MPLegacyLoginItemLabel]];
 }
 
 @end

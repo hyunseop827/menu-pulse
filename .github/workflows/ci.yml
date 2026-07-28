@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check shell scripts
+        run: bash -n Scripts/*.sh
+
+      - name: Check app metadata
+        run: plutil -lint Packaging/Info.plist
+
+      - name: Build and test
+        run: |
+          chmod +x Scripts/*.sh
+          Scripts/test.sh
+          Scripts/build-app.sh
+
+      - name: Verify app
+        run: |
+          codesign --verify --strict "build/release/Menu Pulse.app"
+          file "build/release/Menu Pulse.app/Contents/MacOS/MenuPulse"
+          otool -L "build/release/Menu Pulse.app/Contents/MacOS/MenuPulse"
+          ! otool -L "build/release/Menu Pulse.app/Contents/MacOS/MenuPulse" | grep -q '/usr/lib/swift'

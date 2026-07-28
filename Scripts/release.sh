@@ -43,6 +43,8 @@ if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; the
   fail "remote tag already exists: $TAG"
 fi
 
+Scripts/test.sh
+
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" Packaging/Info.plist
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" Packaging/Info.plist
 
@@ -55,8 +57,7 @@ else
   git commit -m "Release $TAG"
 fi
 
-git tag "$TAG"
-git push origin "$BRANCH"
-git push origin "$TAG"
+git tag -a "$TAG" -m "Release $TAG"
+git push --atomic origin "$BRANCH" "$TAG"
 
 echo "Pushed $TAG. GitHub Actions will build and publish the release."

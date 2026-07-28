@@ -24,12 +24,18 @@ static uint64_t MPDiffTicks(uint32_t current, uint32_t previous) {
 - (NSNumber *)usagePercent {
     host_cpu_load_info_data_t info;
     mach_msg_type_number_t count = HOST_CPU_LOAD_INFO_COUNT;
+    mach_port_t host = mach_host_self();
+    if (host == MACH_PORT_NULL) {
+        return nil;
+    }
+
     kern_return_t result = host_statistics(
-        mach_host_self(),
+        host,
         HOST_CPU_LOAD_INFO,
         (host_info_t)&info,
         &count
     );
+    mach_port_deallocate(mach_task_self(), host);
 
     if (result != KERN_SUCCESS) {
         return nil;
@@ -63,6 +69,11 @@ static uint64_t MPDiffTicks(uint32_t current, uint32_t previous) {
     return @(((double)activeTicks / (double)totalTicks) * 100.0);
 }
 
+- (void)reset {
+    self.hasPreviousTicks = NO;
+    self.previousTicks = (MPTicks){0};
+}
+
 @end
 
 @implementation MPMemoryMonitor
@@ -70,12 +81,18 @@ static uint64_t MPDiffTicks(uint32_t current, uint32_t previous) {
 + (NSNumber *)usagePercent {
     vm_statistics64_data_t stats;
     mach_msg_type_number_t count = HOST_VM_INFO64_COUNT;
+    mach_port_t host = mach_host_self();
+    if (host == MACH_PORT_NULL) {
+        return nil;
+    }
+
     kern_return_t result = host_statistics64(
-        mach_host_self(),
+        host,
         HOST_VM_INFO64,
         (host_info64_t)&stats,
         &count
     );
+    mach_port_deallocate(mach_task_self(), host);
 
     if (result != KERN_SUCCESS) {
         return nil;
@@ -106,6 +123,10 @@ static uint64_t MPDiffTicks(uint32_t current, uint32_t previous) {
 }
 
 + (NSNumber *)usagePercentForPath:(NSString *)path {
+    return [self usagePercentForPath:path availableBytes:nil];
+}
+
++ (NSNumber *)usagePercentForPath:(NSString *)path availableBytes:(uint64_t *)availableBytes {
     NSError *error = nil;
     NSDictionary<NSFileAttributeKey, id> *attributes =
         [[NSFileManager defaultManager] attributesOfFileSystemForPath:path error:&error];
@@ -117,6 +138,10 @@ static uint64_t MPDiffTicks(uint32_t current, uint32_t previous) {
 
     if (error || total <= 0) {
         return nil;
+    }
+
+    if (availableBytes) {
+        *availableBytes = free > 0 ? (uint64_t)free : 0;
     }
 
     double percent = (total - free) / total * 100.0;

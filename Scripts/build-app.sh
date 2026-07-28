@@ -18,8 +18,12 @@ xcrun clang \
   -fmodules \
   -Os \
   -DNDEBUG \
+  -Wall \
+  -Wextra \
+  -Werror \
+  -Wnullable-to-nonnull-conversion \
   -arch "$ARCH" \
-  -mmacosx-version-min=12.0 \
+  -mmacosx-version-min=13.0 \
   -isysroot "$SDKROOT" \
   "${SRC_FILES[@]}" \
   -o "$BIN_PATH" \
@@ -27,6 +31,7 @@ xcrun clang \
   -framework Foundation \
   -framework CoreFoundation \
   -framework IOKit \
+  -framework ServiceManagement \
   -Wl,-dead_strip
 
 strip -x "$BIN_PATH" 2>/dev/null || true

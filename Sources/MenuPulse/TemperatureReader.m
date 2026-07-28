@@ -51,7 +51,6 @@ static const NSTimeInterval MPTemperatureFailureRetryInterval = 300.0;
 @interface MPHIDTemperatureReader ()
 @property(nonatomic, assign) IOHIDEventSystemClientRef client;
 @property(nonatomic, copy, nullable) NSArray<MPHIDSensor *> *sensors;
-@property(nonatomic, strong, nullable) MPHIDSensor *lastWorkingSensor;
 @property(nonatomic, strong) NSDate *lastFullFailure;
 @end
 
@@ -80,13 +79,6 @@ static const NSTimeInterval MPTemperatureFailureRetryInterval = 300.0;
 }
 
 - (NSNumber *)temperatureCelsius {
-    if (self.lastWorkingSensor) {
-        NSNumber *value = [self readTemperatureFromSensor:self.lastWorkingSensor];
-        if (value) {
-            return value;
-        }
-    }
-
     NSDate *now = [NSDate date];
     if (!self.sensors && [now timeIntervalSinceDate:self.lastFullFailure] < MPTemperatureFailureRetryInterval) {
         return nil;
@@ -95,13 +87,10 @@ static const NSTimeInterval MPTemperatureFailureRetryInterval = 300.0;
     NSArray<MPHIDSensor *> *activeSensors = self.sensors ?: [self loadSensors];
     if (activeSensors.count == 0) {
         self.sensors = nil;
-        self.lastWorkingSensor = nil;
         self.lastFullFailure = now;
         return nil;
     }
 
-    NSMutableArray<MPHIDSensor *> *workingSensors = [NSMutableArray array];
-    MPHIDSensor *hottestSensor = nil;
     NSNumber *hottestValue = nil;
 
     for (MPHIDSensor *sensor in activeSensors) {
@@ -110,22 +99,18 @@ static const NSTimeInterval MPTemperatureFailureRetryInterval = 300.0;
             continue;
         }
 
-        [workingSensors addObject:sensor];
         if (!hottestValue || value.doubleValue > hottestValue.doubleValue) {
-            hottestSensor = sensor;
             hottestValue = value;
         }
     }
 
     if (!hottestValue) {
         self.sensors = nil;
-        self.lastWorkingSensor = nil;
         self.lastFullFailure = now;
         return nil;
     }
 
-    self.sensors = workingSensors;
-    self.lastWorkingSensor = hottestSensor;
+    self.sensors = activeSensors;
     return hottestValue;
 }
 
@@ -242,7 +227,6 @@ static uint32_t MPSMCCode(NSString *value) {
 
 @interface MPSMCReader ()
 @property(nonatomic) io_connect_t connection;
-@property(nonatomic, copy, nullable) NSString *cachedTemperatureKey;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSValue *> *keyInfoCache;
 @property(nonatomic, strong) NSDate *lastFullFailure;
 @property(nonatomic, copy) NSArray<NSString *> *temperatureKeys;
@@ -290,27 +274,25 @@ static uint32_t MPSMCCode(NSString *value) {
 
 - (NSNumber *)temperatureCelsius {
     NSDate *now = [NSDate date];
-    if (!self.cachedTemperatureKey &&
-        [now timeIntervalSinceDate:self.lastFullFailure] < MPTemperatureFailureRetryInterval) {
+    if ([now timeIntervalSinceDate:self.lastFullFailure] < MPTemperatureFailureRetryInterval) {
         return nil;
     }
 
-    if (self.cachedTemperatureKey) {
-        NSNumber *value = [self readTemperatureForKey:self.cachedTemperatureKey];
-        if (value && value.doubleValue > 0 && value.doubleValue < 125) {
-            return value;
-        }
-    }
+    NSNumber *hottestValue = nil;
 
     for (NSString *key in self.temperatureKeys) {
         NSNumber *value = [self readTemperatureForKey:key];
         if (value && value.doubleValue > 0 && value.doubleValue < 125) {
-            self.cachedTemperatureKey = key;
-            return value;
+            if (!hottestValue || value.doubleValue > hottestValue.doubleValue) {
+                hottestValue = value;
+            }
         }
     }
 
-    self.cachedTemperatureKey = nil;
+    if (hottestValue) {
+        return hottestValue;
+    }
+
     self.lastFullFailure = now;
     return nil;
 }
