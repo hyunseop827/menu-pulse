@@ -209,15 +209,20 @@ const NSTimeInterval MPRefreshSchedulerNoPendingDelay = DBL_MAX;
         dueMetrics |= MPRefreshMetricDisk;
     }
 
-    // Completing the one-second CPU baseline warm-up is an extra wake-up.
-    // Refresh RAM on that same wake so both metrics start their normal shared
-    // cadence from one truthful sample timestamp.
-    BOOL completesCPUWarmUp =
-        (dueMetrics & MPRefreshMetricCPU) != 0 &&
-        !isnan(self.cpuWarmUpDeadline);
-    if (completesCPUWarmUp &&
-        (self.activeMetrics & MPRefreshMetricRAM) != 0) {
-        dueMetrics |= MPRefreshMetricRAM;
+    // CPU and RAM use the same sampling interval. If one is enabled later, its
+    // first sample would otherwise leave the two metrics on separate deadlines
+    // and double the number of timer wake-ups. Sample both whenever either is
+    // due so their cadence stays aligned.
+    MPRefreshMetric cpuRAMMetrics = MPRefreshMetricCPU | MPRefreshMetricRAM;
+    BOOL bothCPURAMMetricsAreActive =
+        (self.activeMetrics & cpuRAMMetrics) == cpuRAMMetrics;
+    BOOL cpuWarmUpIsPending =
+        !isnan(self.cpuWarmUpDeadline) &&
+        (dueMetrics & MPRefreshMetricCPU) == MPRefreshMetricNone;
+    if (bothCPURAMMetricsAreActive &&
+        !cpuWarmUpIsPending &&
+        (dueMetrics & cpuRAMMetrics) != MPRefreshMetricNone) {
+        dueMetrics |= cpuRAMMetrics;
     }
     return dueMetrics;
 }

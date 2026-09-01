@@ -98,6 +98,17 @@ make_verified_fake_app() {
   /usr/bin/codesign --force --sign - "$app_path" >/dev/null
 }
 
+assert_validation_rejected_in_condition() {
+  local app_path="$1"
+  local expected_version="$2"
+  local case_name="$3"
+  local output_path="$4"
+
+  if validate_app "$app_path" "$expected_version" 2> "$output_path"; then
+    fail_test "$case_name was accepted when validate_app was called from an if condition"
+  fi
+}
+
 run_test() {
   local name="$1"
   shift
@@ -129,6 +140,58 @@ test_install_bundle_validation_and_refusal() (
 
   remove_exact_app "$valid_app"
   assert_absent "$valid_app"
+)
+
+test_install_validation_rejects_every_invalid_app_in_condition() (
+  # shellcheck source=../Scripts/install.sh
+  source "$ROOT_DIR/Scripts/install.sh"
+
+  local case_dir="$TEST_ROOT/install-invalid-condition"
+  local bundle_app="$case_dir/Invalid Bundle ID.app"
+  local version_app="$case_dir/Invalid Version.app"
+  local executable_app="$case_dir/Invalid Executable.app"
+  local architecture_app="$case_dir/Invalid Architecture.app"
+  local signature_app="$case_dir/Invalid Signature.app"
+  local wrong_architecture="x86_64"
+  local wrong_architecture_bin="$case_dir/wrong-architecture-helper"
+
+  /bin/mkdir -p "$case_dir"
+
+  make_verified_fake_app "$bundle_app" "com.example.ForeignApp" "1.2.1"
+  assert_validation_rejected_in_condition \
+    "$bundle_app" "1.2.1" "invalid bundle identifier" "$case_dir/bundle.log"
+  assert_contains "$case_dir/bundle.log" "unexpected bundle identifier"
+
+  make_verified_fake_app "$version_app" "$BUNDLE_ID" "9.9.9"
+  assert_validation_rejected_in_condition \
+    "$version_app" "1.2.1" "invalid version" "$case_dir/version.log"
+  assert_contains "$case_dir/version.log" "expected version 1.2.1"
+
+  make_fake_app "$executable_app" "$BUNDLE_ID" "1.2.1"
+  /usr/bin/plutil -replace CFBundleExecutable -string WrongExecutable \
+    "$executable_app/Contents/Info.plist"
+  /bin/cp "$TEST_HELPER_BIN" "$executable_app/Contents/MacOS/MenuPulse"
+  /bin/chmod 755 "$executable_app/Contents/MacOS/MenuPulse"
+  /usr/bin/codesign --force --sign - "$executable_app" >/dev/null
+  assert_validation_rejected_in_condition \
+    "$executable_app" "1.2.1" "invalid executable" "$case_dir/executable.log"
+  assert_contains "$case_dir/executable.log" "unexpected executable name"
+
+  /usr/bin/xcrun clang -arch "$wrong_architecture" -mmacosx-version-min=13.0 \
+    "$TEST_HELPER_SOURCE" -o "$wrong_architecture_bin"
+  make_fake_app "$architecture_app" "$BUNDLE_ID" "1.2.1"
+  /bin/cp "$wrong_architecture_bin" "$architecture_app/Contents/MacOS/MenuPulse"
+  /bin/chmod 755 "$architecture_app/Contents/MacOS/MenuPulse"
+  /usr/bin/codesign --force --sign - "$architecture_app" >/dev/null
+  assert_validation_rejected_in_condition \
+    "$architecture_app" "1.2.1" "invalid architecture" "$case_dir/architecture.log"
+  assert_contains "$case_dir/architecture.log" "must contain only the arm64 architecture"
+
+  make_verified_fake_app "$signature_app" "$BUNDLE_ID" "1.2.1"
+  /usr/bin/codesign --remove-signature "$signature_app"
+  assert_validation_rejected_in_condition \
+    "$signature_app" "1.2.1" "invalid code signature" "$case_dir/signature.log"
+  assert_contains "$case_dir/signature.log" "code signature verification failed"
 )
 
 test_install_rollback_restores_previous_app() (
@@ -188,6 +251,36 @@ test_install_rollback_restores_after_corrupt_target() (
   validate_app "$INSTALL_APP_PATH" "1.1.1"
   assert_absent "$STAGING_DIR"
   assert_contains "$TEST_ROOT/install-corrupt-rollback.log" "restored the previous app"
+)
+
+test_install_rollback_preserves_backup_when_validation_fails() (
+  # shellcheck source=../Scripts/install.sh
+  source "$ROOT_DIR/Scripts/install.sh"
+
+  INSTALL_DIR_RESOLVED="$TEST_ROOT/install-invalid-backup/Applications"
+  INSTALL_APP_PATH="$INSTALL_DIR_RESOLVED/$APP_NAME"
+  STAGING_DIR="$INSTALL_DIR_RESOLVED/.menu-pulse-install.fixture"
+  BACKUP_APP_PATH="$STAGING_DIR/Previous $APP_NAME"
+  BACKUP_CREATED=1
+  NEW_AT_TARGET=1
+  INSTALL_COMMITTED=0
+
+  /bin/mkdir -p "$STAGING_DIR"
+  make_verified_fake_app "$INSTALL_APP_PATH" "$BUNDLE_ID" "1.2.1"
+  make_verified_fake_app "$BACKUP_APP_PATH" "com.example.CorruptBackup" "1.1.1"
+
+  local rollback_status=0
+  (install_exit_cleanup 44) 2> "$TEST_ROOT/install-invalid-backup.log" || rollback_status=$?
+
+  assert_equal "44" "$rollback_status" "failed rollback did not preserve the install failure status"
+  assert_exists "$STAGING_DIR"
+  assert_exists "$BACKUP_APP_PATH"
+  assert_equal \
+    "1.1.1" \
+    "$(bundle_value "$BACKUP_APP_PATH" CFBundleShortVersionString)" \
+    "failed rollback did not preserve the previous app backup"
+  assert_contains "$TEST_ROOT/install-invalid-backup.log" "automatic rollback failed"
+  assert_contains "$TEST_ROOT/install-invalid-backup.log" "recovery files were preserved"
 )
 
 test_install_main_replaces_and_deduplicates() (
@@ -870,8 +963,10 @@ test_release_rejects_feature_branch() (
 )
 
 run_test "install bundle validation and foreign-app refusal" test_install_bundle_validation_and_refusal
+run_test "install rejects every invalid app from conditional validation" test_install_validation_rejects_every_invalid_app_in_condition
 run_test "install rollback restores previous app" test_install_rollback_restores_previous_app
 run_test "install rollback survives a corrupt replacement" test_install_rollback_restores_after_corrupt_target
+run_test "install rollback preserves a backup after validation failure" test_install_rollback_preserves_backup_when_validation_fails
 run_test "install main safely replaces despite stale-login cleanup failure" test_install_main_replaces_and_deduplicates
 run_test "uninstall foreign-app refusal" test_uninstall_bundle_refusal
 run_test "uninstall removes all scoped data" test_uninstall_removes_all_scoped_data

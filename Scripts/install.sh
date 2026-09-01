@@ -46,24 +46,58 @@ validate_app() {
   local bundle_version=""
   local executable=""
 
-  [[ -d "$app_path" && ! -L "$app_path" ]] || fail "app bundle is missing or is a symbolic link: $app_path"
+  [[ -d "$app_path" && ! -L "$app_path" ]] || {
+    fail "app bundle is missing or is a symbolic link: $app_path"
+    return 1
+  }
 
-  actual_bundle_id="$(bundle_value "$app_path" CFBundleIdentifier)" || fail "cannot read CFBundleIdentifier from $app_path"
-  [[ "$actual_bundle_id" == "$BUNDLE_ID" ]] || fail "unexpected bundle identifier at $app_path: $actual_bundle_id"
+  actual_bundle_id="$(bundle_value "$app_path" CFBundleIdentifier)" || {
+    fail "cannot read CFBundleIdentifier from $app_path"
+    return 1
+  }
+  [[ "$actual_bundle_id" == "$BUNDLE_ID" ]] || {
+    fail "unexpected bundle identifier at $app_path: $actual_bundle_id"
+    return 1
+  }
 
-  short_version="$(bundle_value "$app_path" CFBundleShortVersionString)" || fail "cannot read CFBundleShortVersionString from $app_path"
-  bundle_version="$(bundle_value "$app_path" CFBundleVersion)" || fail "cannot read CFBundleVersion from $app_path"
-  [[ -n "$short_version" && "$bundle_version" == "$short_version" ]] || fail "bundle versions do not match at $app_path"
+  short_version="$(bundle_value "$app_path" CFBundleShortVersionString)" || {
+    fail "cannot read CFBundleShortVersionString from $app_path"
+    return 1
+  }
+  bundle_version="$(bundle_value "$app_path" CFBundleVersion)" || {
+    fail "cannot read CFBundleVersion from $app_path"
+    return 1
+  }
+  [[ -n "$short_version" && "$bundle_version" == "$short_version" ]] || {
+    fail "bundle versions do not match at $app_path"
+    return 1
+  }
   if [[ -n "$expected_version" && "$short_version" != "$expected_version" ]]; then
     fail "expected version $expected_version at $app_path, found $short_version"
+    return 1
   fi
 
-  executable="$(bundle_value "$app_path" CFBundleExecutable)" || fail "cannot read CFBundleExecutable from $app_path"
-  [[ "$executable" == "$EXECUTABLE_NAME" ]] || fail "unexpected executable name at $app_path: $executable"
-  [[ -x "$app_path/Contents/MacOS/$EXECUTABLE_NAME" ]] || fail "app executable is missing at $app_path"
+  executable="$(bundle_value "$app_path" CFBundleExecutable)" || {
+    fail "cannot read CFBundleExecutable from $app_path"
+    return 1
+  }
+  [[ "$executable" == "$EXECUTABLE_NAME" ]] || {
+    fail "unexpected executable name at $app_path: $executable"
+    return 1
+  }
+  [[ -x "$app_path/Contents/MacOS/$EXECUTABLE_NAME" ]] || {
+    fail "app executable is missing at $app_path"
+    return 1
+  }
   [[ "$(/usr/bin/lipo -archs "$app_path/Contents/MacOS/$EXECUTABLE_NAME")" == "arm64" ]] || \
-    fail "app executable must contain only the arm64 architecture at $app_path"
-  /usr/bin/codesign --verify --strict "$app_path" >/dev/null 2>&1 || fail "code signature verification failed at $app_path"
+    {
+      fail "app executable must contain only the arm64 architecture at $app_path"
+      return 1
+    }
+  /usr/bin/codesign --verify --strict "$app_path" >/dev/null 2>&1 || {
+    fail "code signature verification failed at $app_path"
+    return 1
+  }
 }
 
 running_app_pids() {

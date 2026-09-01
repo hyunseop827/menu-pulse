@@ -276,6 +276,93 @@ static void MPTestSchedulerCPUWarmUpRejoinsRAMCadence(void) {
     [scheduler stop];
 }
 
+static void MPTestSchedulerLateRAMActivationRejoinsCPUCadence(void) {
+    MPFakeMonotonicClock *clock = [[MPFakeMonotonicClock alloc] init];
+    clock.time = 100.0;
+    NSMutableArray<NSNumber *> *callbacks = [NSMutableArray array];
+    MPRefreshScheduler *scheduler = MPMakeScheduler(clock, callbacks);
+    scheduler.activeMetrics = MPRefreshMetricCPU;
+    [scheduler start];
+
+    clock.time = 101.0;
+    scheduler.activeMetrics = MPRefreshMetricCPU | MPRefreshMetricRAM;
+    MPAssert(callbacks.lastObject.unsignedIntegerValue ==
+                 (MPRefreshMetricCPU | MPRefreshMetricRAM),
+             @"enabling RAM later should refresh CPU on the same wake-up");
+    MPAssertInterval([scheduler lastSampleTimeForMetric:MPRefreshMetricCPU], 101.0,
+                     @"late RAM activation should realign the CPU timestamp");
+    MPAssertInterval([scheduler lastSampleTimeForMetric:MPRefreshMetricRAM], 101.0,
+                     @"late RAM activation should record a shared RAM timestamp");
+    MPAssertInterval(scheduler.nextDelayAtCurrentTime, 3.0,
+                     @"late RAM activation should leave one shared deadline");
+
+    clock.time = 104.0;
+    MPAssert([scheduler processDueMetrics] ==
+                 (MPRefreshMetricCPU | MPRefreshMetricRAM),
+             @"CPU and late-enabled RAM should remain aligned");
+    [scheduler stop];
+}
+
+static void MPTestSchedulerLateRAMActivationPreservesCPUWarmUp(void) {
+    MPFakeMonotonicClock *clock = [[MPFakeMonotonicClock alloc] init];
+    clock.time = 100.0;
+    NSMutableArray<NSNumber *> *callbacks = [NSMutableArray array];
+    MPRefreshScheduler *scheduler = MPMakeScheduler(clock, callbacks);
+    scheduler.activeMetrics = MPRefreshMetricCPU;
+    [scheduler start];
+    [scheduler prepareCPUWarmUp];
+
+    clock.time = 100.2;
+    scheduler.activeMetrics = MPRefreshMetricCPU | MPRefreshMetricRAM;
+    MPAssert(callbacks.lastObject.unsignedIntegerValue == MPRefreshMetricRAM,
+             @"enabling RAM should not finish an in-progress CPU warm-up early");
+    MPAssertInterval([scheduler lastSampleTimeForMetric:MPRefreshMetricCPU], 100.0,
+                     @"late RAM activation should preserve the CPU baseline time");
+    MPAssertInterval([scheduler lastSampleTimeForMetric:MPRefreshMetricRAM], 100.2,
+                     @"late RAM activation should still sample RAM immediately");
+    MPAssertInterval(scheduler.nextDelayAtCurrentTime, 0.8,
+                     @"the original CPU warm-up deadline should remain armed");
+
+    clock.time = 101.0;
+    MPAssert([scheduler processDueMetrics] ==
+                 (MPRefreshMetricCPU | MPRefreshMetricRAM),
+             @"CPU warm-up completion should realign late-enabled RAM");
+    MPAssertInterval([scheduler lastSampleTimeForMetric:MPRefreshMetricCPU], 101.0,
+                     @"CPU should finish warm-up at its original deadline");
+    MPAssertInterval([scheduler lastSampleTimeForMetric:MPRefreshMetricRAM], 101.0,
+                     @"RAM should rejoin CPU when warm-up finishes");
+    MPAssertInterval(scheduler.nextDelayAtCurrentTime, 3.0,
+                     @"CPU and RAM should share a normal deadline after warm-up");
+    [scheduler stop];
+}
+
+static void MPTestSchedulerLateCPUActivationRejoinsRAMCadence(void) {
+    MPFakeMonotonicClock *clock = [[MPFakeMonotonicClock alloc] init];
+    clock.time = 200.0;
+    NSMutableArray<NSNumber *> *callbacks = [NSMutableArray array];
+    MPRefreshScheduler *scheduler = MPMakeScheduler(clock, callbacks);
+    scheduler.activeMetrics = MPRefreshMetricRAM;
+    [scheduler start];
+
+    clock.time = 201.0;
+    scheduler.activeMetrics = MPRefreshMetricCPU | MPRefreshMetricRAM;
+    MPAssert(callbacks.lastObject.unsignedIntegerValue ==
+                 (MPRefreshMetricCPU | MPRefreshMetricRAM),
+             @"enabling CPU later should refresh RAM on the same wake-up");
+    MPAssertInterval([scheduler lastSampleTimeForMetric:MPRefreshMetricCPU], 201.0,
+                     @"late CPU activation should record a shared CPU timestamp");
+    MPAssertInterval([scheduler lastSampleTimeForMetric:MPRefreshMetricRAM], 201.0,
+                     @"late CPU activation should realign the RAM timestamp");
+    MPAssertInterval(scheduler.nextDelayAtCurrentTime, 3.0,
+                     @"late CPU activation should leave one shared deadline");
+
+    clock.time = 204.0;
+    MPAssert([scheduler processDueMetrics] ==
+                 (MPRefreshMetricCPU | MPRefreshMetricRAM),
+             @"RAM and late-enabled CPU should remain aligned");
+    [scheduler stop];
+}
+
 static void MPTestSchedulerLeewayAndExplicitSamples(void) {
     MPAssertInterval([MPRefreshScheduler leewayForDelay:0.5], 0.1,
                      @"short timer leeway should have a 0.1-second floor");
@@ -308,6 +395,9 @@ int main(void) {
         MPTestSchedulerIntervalChanges();
         MPTestSchedulerCPUWarmUp();
         MPTestSchedulerCPUWarmUpRejoinsRAMCadence();
+        MPTestSchedulerLateRAMActivationRejoinsCPUCadence();
+        MPTestSchedulerLateRAMActivationPreservesCPUWarmUp();
+        MPTestSchedulerLateCPUActivationRejoinsRAMCadence();
         MPTestSchedulerLeewayAndExplicitSamples();
 
         if (MPFailureCount > 0) {
