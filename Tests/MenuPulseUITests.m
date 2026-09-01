@@ -427,6 +427,8 @@ static void MPTestSettingsWindowControls(void) {
     MPSettingsWindowController *controller = [[MPSettingsWindowController alloc]
         initWithSettingsStore:store
                       delegate:delegate];
+    MPAssert(fabs(NSHeight(controller.window.contentView.bounds) - 420.0) < 0.5,
+             @"settings window should fit its controls without excess bottom space");
 
     MPAssert([controller.cpuRAMRefreshPopup.itemTitles isEqualToArray:@[
         @"Every 1 second", @"Every 3 seconds", @"Every 10 seconds",

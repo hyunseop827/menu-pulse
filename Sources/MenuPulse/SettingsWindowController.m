@@ -20,7 +20,7 @@
 - (instancetype)initWithSettingsStore:(MPSettingsStore *)settingsStore
                               delegate:(id<MPSettingsWindowControllerDelegate>)delegate {
     NSWindow *window = [[NSWindow alloc]
-        initWithContentRect:NSMakeRect(0, 0, 390, 510)
+        initWithContentRect:NSMakeRect(0, 0, 390, 420)
                   styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable)
                     backing:NSBackingStoreBuffered
                       defer:NO];
