@@ -9,8 +9,14 @@ DMG_PATH="$ROOT_DIR/dist/MenuPulse.dmg"
 WARMUP="${WARMUP:-30}"
 DURATION="${DURATION:-300}"
 INTERVAL="${INTERVAL:-1}"
-REFRESH_INTERVAL="${REFRESH_INTERVAL:-3}"
-ALL_METRICS="${ALL_METRICS:-0}"
+CPU_RAM_REFRESH_INTERVAL="${CPU_RAM_REFRESH_INTERVAL:-${REFRESH_INTERVAL:-3}}"
+TEMPERATURE_REFRESH_INTERVAL="${TEMPERATURE_REFRESH_INTERVAL:-30}"
+DISK_REFRESH_INTERVAL="${DISK_REFRESH_INTERVAL:-300}"
+SHOW_CPU="${SHOW_CPU:-1}"
+SHOW_RAM="${SHOW_RAM:-1}"
+SHOW_TEMPERATURE="${SHOW_TEMPERATURE:-0}"
+SHOW_DISK="${SHOW_DISK:-0}"
+ALL_METRICS="${ALL_METRICS:-}"
 
 BENCHMARK_PID=""
 BENCHMARK_HOME=""
@@ -34,6 +40,19 @@ require_positive_integer() {
   local value="$2"
   require_nonnegative_integer "$name" "$value"
   (( 10#$value > 0 )) || fail "$name must be greater than zero."
+}
+
+require_boolean() {
+  local name="$1"
+  local value="$2"
+  case "$value" in
+    0|1) ;;
+    *) fail "$name must be 0 or 1." ;;
+  esac
+}
+
+boolean_argument() {
+  [[ "$1" == "1" ]] && echo YES || echo NO
 }
 
 cleanup() {
@@ -86,15 +105,37 @@ WARMUP=$(( 10#$WARMUP ))
 DURATION=$(( 10#$DURATION ))
 INTERVAL=$(( 10#$INTERVAL ))
 
-case "$REFRESH_INTERVAL" in
+case "$CPU_RAM_REFRESH_INTERVAL" in
   1|3|10) ;;
-  *) fail "REFRESH_INTERVAL must be 1, 3, or 10." ;;
+  *) fail "CPU_RAM_REFRESH_INTERVAL must be 1, 3, or 10." ;;
 esac
 
-case "$ALL_METRICS" in
-  0|1) ;;
-  *) fail "ALL_METRICS must be 0 or 1." ;;
+case "$TEMPERATURE_REFRESH_INTERVAL" in
+  1|3|10|30|60) ;;
+  *) fail "TEMPERATURE_REFRESH_INTERVAL must be 1, 3, 10, 30, or 60." ;;
 esac
+
+case "$DISK_REFRESH_INTERVAL" in
+  60|180|300|600) ;;
+  *) fail "DISK_REFRESH_INTERVAL must be 60, 180, 300, or 600." ;;
+esac
+
+require_boolean SHOW_CPU "$SHOW_CPU"
+require_boolean SHOW_RAM "$SHOW_RAM"
+require_boolean SHOW_TEMPERATURE "$SHOW_TEMPERATURE"
+require_boolean SHOW_DISK "$SHOW_DISK"
+if [[ -n "$ALL_METRICS" ]]; then
+  require_boolean ALL_METRICS "$ALL_METRICS"
+  if [[ "$ALL_METRICS" == "1" ]]; then
+    SHOW_CPU=1
+    SHOW_RAM=1
+    SHOW_TEMPERATURE=1
+    SHOW_DISK=1
+  fi
+fi
+if [[ "$SHOW_CPU$SHOW_RAM$SHOW_TEMPERATURE$SHOW_DISK" == "0000" ]]; then
+  fail "at least one metric must be enabled."
+fi
 
 [[ -d "${TMPDIR:-/tmp}" ]] || fail "TMPDIR must refer to an existing directory."
 BENCHMARK_TEMP_ROOT="$(cd "${TMPDIR:-/tmp}" && pwd -P)"
@@ -105,32 +146,36 @@ echo "Building Menu Pulse for measurement..."
 "$ROOT_DIR/Scripts/build-app.sh" >/dev/null
 [[ -x "$BIN_PATH" ]] || fail "Built executable was not found: $BIN_PATH"
 
-SHOW_TEMPERATURE=NO
-SHOW_DISK=NO
-SCENARIO="CPU/RAM"
-if [[ "$ALL_METRICS" == "1" ]]; then
-  SHOW_TEMPERATURE=YES
-  SHOW_DISK=YES
-  SCENARIO="CPU/RAM/TEMP/DISK"
-fi
+SHOW_CPU_ARGUMENT="$(boolean_argument "$SHOW_CPU")"
+SHOW_RAM_ARGUMENT="$(boolean_argument "$SHOW_RAM")"
+SHOW_TEMPERATURE_ARGUMENT="$(boolean_argument "$SHOW_TEMPERATURE")"
+SHOW_DISK_ARGUMENT="$(boolean_argument "$SHOW_DISK")"
+SCENARIO_PARTS=()
+[[ "$SHOW_CPU" == "0" ]] || SCENARIO_PARTS+=(CPU)
+[[ "$SHOW_RAM" == "0" ]] || SCENARIO_PARTS+=(RAM)
+[[ "$SHOW_TEMPERATURE" == "0" ]] || SCENARIO_PARTS+=(TEMP)
+[[ "$SHOW_DISK" == "0" ]] || SCENARIO_PARTS+=(DISK)
+SCENARIO="$(IFS=/; echo "${SCENARIO_PARTS[*]}")"
 
 SAMPLE_FILE="$(mktemp "$BENCHMARK_TEMP_ROOT/menu-pulse-samples.XXXXXX")"
 LOG_FILE="$(mktemp "$BENCHMARK_TEMP_ROOT/menu-pulse-measure.XXXXXX")"
 BENCHMARK_HOME="$(mktemp -d "$BENCHMARK_TEMP_ROOT/menu-pulse-benchmark-home.XXXXXX")"
 /bin/mkdir -p "$BENCHMARK_HOME/Library/Preferences"
 
-# The command-line pairs select the scenario through NSArgumentDomain. The fixed
-# temporary home also isolates persistent defaults, including legacy-key cleanup.
+# The command-line pairs select the scenario through NSArgumentDomain.
+# CFFIXED_USER_HOME isolates persistent defaults, including legacy-key cleanup.
 CFFIXED_USER_HOME="$BENCHMARK_HOME" \
-  HOME="$BENCHMARK_HOME" \
   MENU_PULSE_DISABLE_LOGIN_ITEM_MIGRATION=1 \
   "$BIN_PATH" \
-  -showCPU YES \
-  -showRAM YES \
-  -showTemperature "$SHOW_TEMPERATURE" \
-  -showDisk "$SHOW_DISK" \
+  -showCPU "$SHOW_CPU_ARGUMENT" \
+  -showRAM "$SHOW_RAM_ARGUMENT" \
+  -showTemperature "$SHOW_TEMPERATURE_ARGUMENT" \
+  -showDisk "$SHOW_DISK_ARGUMENT" \
   -temperatureUnit C \
-  -cpuRAMRefreshIntervalSeconds "$REFRESH_INTERVAL" \
+  -cpuRAMRefreshIntervalSeconds "$CPU_RAM_REFRESH_INTERVAL" \
+  -temperatureRefreshIntervalSeconds "$TEMPERATURE_REFRESH_INTERVAL" \
+  -diskRefreshIntervalSeconds "$DISK_REFRESH_INTERVAL" \
+  -hasCompletedOpenAtLoginPrompt YES \
   >"$LOG_FILE" 2>&1 &
 BENCHMARK_PID=$!
 
@@ -142,7 +187,15 @@ if ! kill -0 "$BENCHMARK_PID" >/dev/null 2>&1; then
 fi
 
 echo "Scenario: $SCENARIO"
-echo "Refresh interval: ${REFRESH_INTERVAL}s"
+if [[ "$SHOW_CPU" == "1" || "$SHOW_RAM" == "1" ]]; then
+  echo "CPU/RAM refresh interval: ${CPU_RAM_REFRESH_INTERVAL}s"
+fi
+if [[ "$SHOW_TEMPERATURE" == "1" ]]; then
+  echo "Temperature refresh interval: ${TEMPERATURE_REFRESH_INTERVAL}s"
+fi
+if [[ "$SHOW_DISK" == "1" ]]; then
+  echo "Disk refresh interval: ${DISK_REFRESH_INTERVAL}s"
+fi
 echo "Benchmark PID: $BENCHMARK_PID (existing Menu Pulse processes are untouched)"
 echo "Warm-up: ${WARMUP}s"
 

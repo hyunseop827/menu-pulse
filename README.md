@@ -65,9 +65,11 @@ See [LICENSE](LICENSE) for details.
 
 - `CPU`: on by default
 - `RAM`: on by default
-- `TEMP`: optional, off by default, Celsius/Fahrenheit
-- `DISK`: optional, off by default
+- `TEMP`: optional, off by default, Celsius/Fahrenheit, `1` to `60` seconds
+- `DISK`: optional, off by default, `1` to `10` minutes
 - CPU/RAM refresh: `1`, `3`, or `10` seconds; `3` seconds by default
+- One-time Open at Login choice on a new launch; the repository installer enables it directly
+- Confirmed Reset Defaults and Quit actions; Close hides only the settings window
 
 RAM is calculated close to Activity Monitor's `Memory Used`: app memory + wired memory + compressed memory.
 
@@ -79,11 +81,12 @@ Refresh intervals:
 
 ```text
 CPU + RAM  3s by default (select 1s, 3s, or 10s)
-TEMP      30s fixed
-DISK     300s fixed
+TEMP      30s by default (select 1s, 3s, 10s, 30s, or 60s)
+DISK       5m by default (select 1m, 3m, 5m, or 10m)
 ```
 
 For example, keep the 3-second default for everyday use. Select 1 second only when you want to watch a short build more closely.
+Faster temperature updates can use more energy, so the 30-second default is better for normal use.
 
 ## Low Resource Intent
 
@@ -100,7 +103,7 @@ Menu Pulse is not trying to be a feature-heavy monitoring app. It is for checkin
 
 ### Measured Benchmark
 
-Measured with Menu Pulse `1.2.0` on September 1, 2026.
+Measured with Menu Pulse `1.3.0` on September 1, 2026.
 
 - MacBook Air with an 8-core Apple M1
 - 16GB memory and 256GB SSD
@@ -108,38 +111,48 @@ Measured with Menu Pulse `1.2.0` on September 1, 2026.
 - 30-second warm-up after launch
 - 300 samples over 5 minutes at 1-second intervals per scenario
 
-| Enabled metrics | CPU/RAM refresh | CPU average | CPU maximum | RSS average | RSS maximum | Private dirty |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| CPU + RAM | 1s | 0.227% | 1.200% | 37.3MB | 37.4MB | 10.0MB |
-| CPU + RAM (default) | 3s | 0.088% | 1.000% | 35.5MB | 37.3MB | 7.0MB |
-| CPU + RAM | 10s | 0.021% | 0.900% | 37.2MB | 37.3MB | 9.8MB |
-| CPU + RAM + TEMP + DISK | 3s | 0.101% | 1.300% | 38.2MB | 38.3MB | 10.4MB |
+| Enabled metrics | CPU/RAM | TEMP | DISK | CPU average | CPU maximum | RSS average | RSS maximum | Private dirty |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| CPU + RAM (default) | 3s | Off | Off | 0.065% | 1.000% | 37.2MB | 37.3MB | 9.8MB |
+| TEMP only | Off | 1s | Off | 0.273% | 1.500% | 40.0MB | 40.6MB | 12.4MB |
+| DISK only | Off | Off | 1m | 0.000% | 0.100% | 37.4MB | 37.5MB | 9.8MB |
+| CPU + RAM + TEMP + DISK (fastest) | 1s | 1s | 1m | 0.613% | 2.300% | 38.3MB | 38.3MB | 10.3MB |
 
-- Installed app size: approximately 644KB
-- Release DMG size: approximately 967KB
+- Installed app size: approximately 660KB
+- Release DMG size: approximately 966KB
 
 RSS includes shared system frameworks used by the app.
-For example, the default configuration reported 35.5MB RSS, while private dirty memory, which is closer to app-specific changed memory, was 7.0MB.
+For example, the default configuration reported 37.2MB RSS, while private dirty memory, which is closer to app-specific changed memory, was 9.8MB.
 The CPU maximum is a short burst while metrics refresh.
 Results can vary with other running processes and the macOS cache state.
 
-CPU and RAM use the same configured refresh cadence in every row.
+The 3-second default met the targets of 0.2% average CPU and 12MB private dirty memory.
+The fastest combination met the 15MB private dirty target, but its 0.613% average CPU did not meet the intended 0.5% target.
+A local profile identified 1-second IOHID temperature sensor reads as the dominant active work. TEMP is off by default, and the 1-second choice is intended for short checks.
 
-The 3-second default met the targets of 0.2% average CPU and 12MB private dirty memory. TEMP and DISK remain on their fixed 30-second and 300-second schedules.
-
-To reproduce the default measurement without changing the installed app or persistent settings, run:
+To reproduce all four isolated scenarios without changing the installed app or persistent settings, run:
 
 ```sh
-WARMUP=30 DURATION=300 INTERVAL=1 REFRESH_INTERVAL=3 ALL_METRICS=0 Scripts/measure.sh
+# Default CPU/RAM
+WARMUP=30 DURATION=300 INTERVAL=1 SHOW_CPU=1 SHOW_RAM=1 SHOW_TEMPERATURE=0 SHOW_DISK=0 CPU_RAM_REFRESH_INTERVAL=3 Scripts/measure.sh
+
+# TEMP only
+WARMUP=30 DURATION=300 INTERVAL=1 SHOW_CPU=0 SHOW_RAM=0 SHOW_TEMPERATURE=1 SHOW_DISK=0 TEMPERATURE_REFRESH_INTERVAL=1 Scripts/measure.sh
+
+# DISK only
+WARMUP=30 DURATION=300 INTERVAL=1 SHOW_CPU=0 SHOW_RAM=0 SHOW_TEMPERATURE=0 SHOW_DISK=1 DISK_REFRESH_INTERVAL=60 Scripts/measure.sh
+
+# Fastest combination
+WARMUP=30 DURATION=300 INTERVAL=1 SHOW_CPU=1 SHOW_RAM=1 SHOW_TEMPERATURE=1 SHOW_DISK=1 CPU_RAM_REFRESH_INTERVAL=1 TEMPERATURE_REFRESH_INTERVAL=1 DISK_REFRESH_INTERVAL=60 Scripts/measure.sh
 ```
 
-Set `REFRESH_INTERVAL` to `1`, `3`, or `10`. Set `ALL_METRICS=1` for the full metric scenario.
+The script removes its temporary preferences, raw process samples, and app log when it exits.
 
 ## Privacy and complete removal
 
 Menu Pulse does not send network requests. It has no telemetry, crash reporting SDK, measurement history, or metric log.
 
-It stores only local preferences for enabled metrics, temperature unit, and the CPU/RAM refresh interval. macOS may also store the menu bar position, login item registration, cache, saved window state, and OS-generated crash diagnostics.
+It stores only local preferences for enabled metrics, temperature unit, the three refresh intervals, and whether the one-time Open at Login question was answered. The actual login item state remains managed by macOS. macOS may also store the menu bar position, login item registration, cache, saved window state, and OS-generated crash diagnostics.
 
 To remove both possible app copies and all Menu Pulse-specific local data, run from this repository:
 
@@ -158,6 +171,7 @@ If it cannot inspect a previous app location, it stops instead of falsely report
 Sources/MenuPulse/
   main.m
   MenuPulse.m
+  SettingsWindowController.m
   Monitors.m
   RefreshScheduler.m
   SettingsStore.m

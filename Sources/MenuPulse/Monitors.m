@@ -124,15 +124,11 @@ uint64_t MPUnsignedTickDelta(uint32_t current, uint32_t previous) {
 
 @implementation MPDiskMonitor
 
-+ (NSNumber *)usagePercent {
-    return [self usagePercentForPath:NSHomeDirectory()];
-}
-
-+ (NSNumber *)usagePercentForPath:(NSString *)path {
-    return [self usagePercentForPath:path availableBytes:nil];
-}
-
 + (NSNumber *)usagePercentForPath:(NSString *)path availableBytes:(uint64_t *)availableBytes {
+    if (availableBytes) {
+        *availableBytes = 0;
+    }
+
     NSError *error = nil;
     NSDictionary<NSFileAttributeKey, id> *attributes =
         [[NSFileManager defaultManager] attributesOfFileSystemForPath:path error:&error];

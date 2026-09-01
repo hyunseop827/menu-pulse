@@ -4,7 +4,6 @@
 #import <IOKit/hidsystem/IOHIDEventSystemClient.h>
 #import <IOKit/hidsystem/IOHIDServiceClient.h>
 #import <Foundation/Foundation.h>
-#import <math.h>
 
 typedef CFTypeRef IOHIDEventRef;
 
@@ -18,11 +17,14 @@ extern IOHIDEventRef _Nullable IOHIDServiceClientCopyEvent(
 );
 extern double IOHIDEventGetFloatValue(IOHIDEventRef event, int32_t field);
 
-static const NSTimeInterval MPTemperatureFailureRetryInterval = 300.0;
+const NSTimeInterval MPTemperatureFailureRetryInterval = 300.0;
 
 BOOL MPTemperatureRetryAllowed(NSTimeInterval now, NSTimeInterval lastFailureTime) {
-    return isnan(lastFailureTime) ||
-        now - lastFailureTime >= MPTemperatureFailureRetryInterval;
+    return MPTemperatureRetryAllowedForInterval(
+        now,
+        lastFailureTime,
+        MPTemperatureFailureRetryInterval
+    );
 }
 
 static NSTimeInterval MPTemperatureMonotonicTime(void) {
@@ -31,17 +33,15 @@ static NSTimeInterval MPTemperatureMonotonicTime(void) {
 
 @interface MPHIDSensor : NSObject
 @property(nonatomic, assign, readonly) IOHIDServiceClientRef service;
-@property(nonatomic, copy, readonly) NSString *product;
-- (instancetype)initWithService:(IOHIDServiceClientRef)service product:(NSString *)product;
+- (instancetype)initWithService:(IOHIDServiceClientRef)service;
 @end
 
 @implementation MPHIDSensor
 
-- (instancetype)initWithService:(IOHIDServiceClientRef)service product:(NSString *)product {
+- (instancetype)initWithService:(IOHIDServiceClientRef)service {
     self = [super init];
     if (self) {
         _service = service ? (IOHIDServiceClientRef)CFRetain(service) : NULL;
-        _product = [product copy];
     }
     return self;
 }
@@ -56,6 +56,7 @@ static NSTimeInterval MPTemperatureMonotonicTime(void) {
 
 @interface MPHIDTemperatureReader : NSObject
 - (nullable NSNumber *)temperatureCelsius;
+- (void)invalidateHardware;
 @end
 
 @interface MPHIDTemperatureReader ()
@@ -72,9 +73,6 @@ static NSTimeInterval MPTemperatureMonotonicTime(void) {
     self = [super init];
     if (self) {
         _lastFullFailureTime = NAN;
-        if (![self initializeClient]) {
-            _lastFullFailureTime = MPTemperatureMonotonicTime();
-        }
     }
     return self;
 }
@@ -127,6 +125,12 @@ static NSTimeInterval MPTemperatureMonotonicTime(void) {
     return hottestValue;
 }
 
+- (void)invalidateHardware {
+    // Keep lastFullFailureTime so disabling and re-enabling the metric cannot
+    // bypass the five-minute retry cooldown after a hardware failure.
+    [self invalidateClient];
+}
+
 - (BOOL)initializeClient {
     if (self.client) {
         return YES;
@@ -174,7 +178,7 @@ static NSTimeInterval MPTemperatureMonotonicTime(void) {
             continue;
         }
 
-        [sensors addObject:[[MPHIDSensor alloc] initWithService:service product:product]];
+        [sensors addObject:[[MPHIDSensor alloc] initWithService:service]];
     }
 
     return sensors;
@@ -271,7 +275,6 @@ static uint32_t MPSMCCode(NSString *value) {
 @property(nonatomic) io_connect_t connection;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSValue *> *keyInfoCache;
 @property(nonatomic, strong) NSMutableSet<NSString *> *missingKeyCache;
-@property(nonatomic) NSTimeInterval lastFullFailureTime;
 @property(nonatomic, copy) NSArray<NSString *> *temperatureKeys;
 @end
 
@@ -300,7 +303,6 @@ static uint32_t MPSMCCode(NSString *value) {
         _connection = openedConnection;
         _keyInfoCache = [NSMutableDictionary dictionary];
         _missingKeyCache = [NSMutableSet set];
-        _lastFullFailureTime = NAN;
         _temperatureKeys = @[
             @"TC0P", @"TC0E", @"TC0D", @"TCXC", @"TCXc",
             @"Tp09", @"Tp0T", @"Tp01", @"Tp05",
@@ -317,11 +319,6 @@ static uint32_t MPSMCCode(NSString *value) {
 }
 
 - (NSNumber *)temperatureCelsius {
-    NSTimeInterval now = MPTemperatureMonotonicTime();
-    if (!MPTemperatureRetryAllowed(now, self.lastFullFailureTime)) {
-        return nil;
-    }
-
     NSNumber *hottestValue = nil;
 
     for (NSString *key in self.temperatureKeys) {
@@ -333,13 +330,7 @@ static uint32_t MPSMCCode(NSString *value) {
         }
     }
 
-    if (hottestValue) {
-        self.lastFullFailureTime = NAN;
-        return hottestValue;
-    }
-
-    self.lastFullFailureTime = now;
-    return nil;
+    return hottestValue;
 }
 
 + (io_service_t)serviceNamed:(NSString *)name {
@@ -454,9 +445,16 @@ static uint32_t MPSMCCode(NSString *value) {
 @property(nonatomic, strong, nullable) MPSMCReader *smcReader;
 @property(nonatomic) NSTimeInterval lastSMCFailureTime;
 @property(nonatomic) dispatch_queue_t queue;
+@property(nonatomic, strong) NSLock *cancellationLock;
+@property(nonatomic) NSUInteger cancellationGeneration;
+- (nullable NSNumber *)readTemperatureCelsius;
+- (BOOL)isOnReaderQueue;
+- (BOOL)isCancellationGenerationCurrent:(NSUInteger)generation;
 @end
 
 @implementation MPTemperatureReader
+
+static const void *MPTemperatureReaderQueueKey = &MPTemperatureReaderQueueKey;
 
 - (instancetype)init {
     self = [super init];
@@ -464,11 +462,18 @@ static uint32_t MPSMCCode(NSString *value) {
         _hidReader = [[MPHIDTemperatureReader alloc] init];
         _lastSMCFailureTime = NAN;
         _queue = dispatch_queue_create("MenuPulse.temperature-reader", DISPATCH_QUEUE_SERIAL);
+        _cancellationLock = [[NSLock alloc] init];
+        dispatch_queue_set_specific(
+            _queue,
+            MPTemperatureReaderQueueKey,
+            (__bridge void *)self,
+            NULL
+        );
     }
     return self;
 }
 
-- (NSNumber *)temperatureCelsius {
+- (NSNumber *)readTemperatureCelsius {
     NSNumber *hidTemperature = [self.hidReader temperatureCelsius];
     if (hidTemperature) {
         return hidTemperature;
@@ -492,12 +497,59 @@ static uint32_t MPSMCCode(NSString *value) {
 
 - (void)temperatureCelsiusAsync:(MPTemperatureCompletion)completion {
     __weak typeof(self) weakSelf = self;
+    MPTemperatureCompletion copiedCompletion = [completion copy];
+
+    [self.cancellationLock lock];
+    NSUInteger generation = self.cancellationGeneration;
     dispatch_async(self.queue, ^{
-        NSNumber *temperature = [weakSelf temperatureCelsius];
+        MPTemperatureReader *strongSelf = weakSelf;
+        if (![strongSelf isCancellationGenerationCurrent:generation]) {
+            // The request never started sensor I/O. Its owner already cleared
+            // the in-flight state while disabling temperature, so no stale
+            // nil completion is needed.
+            return;
+        }
+
+        NSNumber *temperature = [strongSelf readTemperatureCelsius];
         dispatch_async(dispatch_get_main_queue(), ^{
-            completion(temperature);
+            copiedCompletion(temperature);
         });
     });
+    [self.cancellationLock unlock];
+}
+
+- (void)invalidateHardware {
+    void (^invalidateBlock)(void) = ^{
+        [self.hidReader invalidateHardware];
+        self.smcReader = nil;
+    };
+
+    // Advance the generation and enqueue invalidation under the same lock used
+    // when reads capture their token. This keeps queue order deterministic even
+    // if callers arrive from different threads.
+    [self.cancellationLock lock];
+    self.cancellationGeneration += 1;
+    if ([self isOnReaderQueue]) {
+        [self.cancellationLock unlock];
+        invalidateBlock();
+    } else {
+        // Enqueue behind any active read without blocking the settings UI.
+        // A subsequent read is queued after this block, preserving
+        // read -> invalidate -> read ordering across a quick off/on toggle.
+        dispatch_async(self.queue, invalidateBlock);
+        [self.cancellationLock unlock];
+    }
+}
+
+- (BOOL)isOnReaderQueue {
+    return dispatch_get_specific(MPTemperatureReaderQueueKey) == (__bridge void *)self;
+}
+
+- (BOOL)isCancellationGenerationCurrent:(NSUInteger)generation {
+    [self.cancellationLock lock];
+    BOOL isCurrent = generation == self.cancellationGeneration;
+    [self.cancellationLock unlock];
+    return isCurrent;
 }
 
 - (MPSMCReader *)activeSMCReader {

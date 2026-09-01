@@ -4,8 +4,6 @@
 
 #import <math.h>
 
-const NSTimeInterval MPTemperatureRefreshInterval = 30.0;
-const NSTimeInterval MPDiskRefreshInterval = 300.0;
 const NSTimeInterval MPRefreshSchedulerNoPendingDelay = DBL_MAX;
 
 @implementation MPSystemMonotonicClock
@@ -28,6 +26,11 @@ const NSTimeInterval MPRefreshSchedulerNoPendingDelay = DBL_MAX;
 @property(nonatomic) NSTimeInterval lastRAMTime;
 @property(nonatomic) NSTimeInterval lastTemperatureTime;
 @property(nonatomic) NSTimeInterval lastDiskTime;
+@property(nonatomic, readwrite) MPRefreshMetric pausedMetrics;
+@property(nonatomic) NSTimeInterval cpuDeferredUntil;
+@property(nonatomic) NSTimeInterval ramDeferredUntil;
+@property(nonatomic) NSTimeInterval temperatureDeferredUntil;
+@property(nonatomic) NSTimeInterval diskDeferredUntil;
 @end
 
 @implementation MPRefreshScheduler
@@ -48,11 +51,17 @@ const NSTimeInterval MPRefreshSchedulerNoPendingDelay = DBL_MAX;
         _dueHandler = [dueHandler copy];
         _activeMetrics = MPRefreshMetricNone;
         _cpuRAMRefreshIntervalSeconds = MPCPURAMRefreshIntervalDefault;
+        _temperatureRefreshIntervalSeconds = MPTemperatureRefreshIntervalDefault;
+        _diskRefreshIntervalSeconds = MPDiskRefreshIntervalDefault;
         _lastCPUTime = NAN;
         _cpuWarmUpDeadline = NAN;
         _lastRAMTime = NAN;
         _lastTemperatureTime = NAN;
         _lastDiskTime = NAN;
+        _cpuDeferredUntil = NAN;
+        _ramDeferredUntil = NAN;
+        _temperatureDeferredUntil = NAN;
+        _diskDeferredUntil = NAN;
 
         _timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, callbackQueue);
         __weak typeof(self) weakSelf = self;
@@ -79,7 +88,9 @@ const NSTimeInterval MPRefreshSchedulerNoPendingDelay = DBL_MAX;
     }
 
     MPRefreshMetric changedMetrics = _activeMetrics ^ validatedMetrics;
+    MPRefreshMetric disabledMetrics = _activeMetrics & ~validatedMetrics;
     _activeMetrics = validatedMetrics;
+    _pausedMetrics &= ~disabledMetrics;
     [self invalidateTimesForMetrics:changedMetrics];
 
     if (!self.running) {
@@ -103,6 +114,37 @@ const NSTimeInterval MPRefreshSchedulerNoPendingDelay = DBL_MAX;
     }
 
     _cpuRAMRefreshIntervalSeconds = validatedInterval;
+    if (self.running) {
+        [self processDueMetrics];
+    }
+}
+
+- (void)setTemperatureRefreshIntervalSeconds:(NSTimeInterval)temperatureRefreshIntervalSeconds {
+    NSTimeInterval validatedInterval =
+        [MPSettingsStore isValidTemperatureRefreshInterval:
+            temperatureRefreshIntervalSeconds]
+        ? temperatureRefreshIntervalSeconds
+        : MPTemperatureRefreshIntervalDefault;
+    if (_temperatureRefreshIntervalSeconds == validatedInterval) {
+        return;
+    }
+
+    _temperatureRefreshIntervalSeconds = validatedInterval;
+    if (self.running) {
+        [self processDueMetrics];
+    }
+}
+
+- (void)setDiskRefreshIntervalSeconds:(NSTimeInterval)diskRefreshIntervalSeconds {
+    NSTimeInterval validatedInterval =
+        [MPSettingsStore isValidDiskRefreshInterval:diskRefreshIntervalSeconds]
+        ? diskRefreshIntervalSeconds
+        : MPDiskRefreshIntervalDefault;
+    if (_diskRefreshIntervalSeconds == validatedInterval) {
+        return;
+    }
+
+    _diskRefreshIntervalSeconds = validatedInterval;
     if (self.running) {
         [self processDueMetrics];
     }
@@ -167,6 +209,67 @@ const NSTimeInterval MPRefreshSchedulerNoPendingDelay = DBL_MAX;
     }
 }
 
+- (void)setMetric:(MPRefreshMetric)metric paused:(BOOL)paused {
+    MPRefreshMetric metrics = metric & MPRefreshMetricAll;
+    if (paused) {
+        metrics &= self.activeMetrics;
+    }
+    if (metrics == MPRefreshMetricNone) {
+        return;
+    }
+
+    MPRefreshMetric updatedPausedMetrics = paused
+        ? self.pausedMetrics | metrics
+        : self.pausedMetrics & ~metrics;
+    if (self.pausedMetrics == updatedPausedMetrics) {
+        return;
+    }
+
+    MPRefreshMetric resumedMetrics = self.pausedMetrics & ~updatedPausedMetrics;
+    self.pausedMetrics = updatedPausedMetrics;
+    if (resumedMetrics != MPRefreshMetricNone) {
+        [self markMetrics:(resumedMetrics & self.activeMetrics)
+            sampledAtTime:self.clock.monotonicTime];
+    }
+
+    if (self.running) {
+        [self scheduleNextTimerAtTime:self.clock.monotonicTime];
+    }
+}
+
+- (void)deferMetric:(MPRefreshMetric)metric forInterval:(NSTimeInterval)interval {
+    MPRefreshMetric metrics = metric & MPRefreshMetricAll;
+    if (metrics == MPRefreshMetricNone || !isfinite(interval) || interval < 0.0) {
+        return;
+    }
+
+    NSTimeInterval deferredUntil = self.clock.monotonicTime + interval;
+    MPRefreshMetric individualMetrics[] = {
+        MPRefreshMetricCPU,
+        MPRefreshMetricRAM,
+        MPRefreshMetricTemperature,
+        MPRefreshMetricDisk,
+    };
+    for (NSUInteger index = 0;
+         index < sizeof(individualMetrics) / sizeof(individualMetrics[0]);
+         index += 1) {
+        MPRefreshMetric individualMetric = individualMetrics[index];
+        if ((metrics & individualMetric) == 0) {
+            continue;
+        }
+
+        NSTimeInterval existingDeadline = [self deferredUntilForMetric:individualMetric];
+        NSTimeInterval updatedDeadline = isnan(existingDeadline)
+            ? deferredUntil
+            : MAX(existingDeadline, deferredUntil);
+        [self setDeferredUntil:updatedDeadline forMetric:individualMetric];
+    }
+
+    if (self.running) {
+        [self scheduleNextTimerAtTime:self.clock.monotonicTime];
+    }
+}
+
 - (MPRefreshMetric)dueMetricsAtCurrentTime {
     return [self dueMetricsAtTime:self.clock.monotonicTime];
 }
@@ -214,12 +317,13 @@ const NSTimeInterval MPRefreshSchedulerNoPendingDelay = DBL_MAX;
     // and double the number of timer wake-ups. Sample both whenever either is
     // due so their cadence stays aligned.
     MPRefreshMetric cpuRAMMetrics = MPRefreshMetricCPU | MPRefreshMetricRAM;
-    BOOL bothCPURAMMetricsAreActive =
-        (self.activeMetrics & cpuRAMMetrics) == cpuRAMMetrics;
+    BOOL bothCPURAMMetricsCanRun =
+        [self metricCanRun:MPRefreshMetricCPU atTime:now] &&
+        [self metricCanRun:MPRefreshMetricRAM atTime:now];
     BOOL cpuWarmUpIsPending =
         !isnan(self.cpuWarmUpDeadline) &&
         (dueMetrics & MPRefreshMetricCPU) == MPRefreshMetricNone;
-    if (bothCPURAMMetricsAreActive &&
+    if (bothCPURAMMetricsCanRun &&
         !cpuWarmUpIsPending &&
         (dueMetrics & cpuRAMMetrics) != MPRefreshMetricNone) {
         dueMetrics |= cpuRAMMetrics;
@@ -228,7 +332,7 @@ const NSTimeInterval MPRefreshSchedulerNoPendingDelay = DBL_MAX;
 }
 
 - (BOOL)metric:(MPRefreshMetric)metric isDueAtTime:(NSTimeInterval)now {
-    if ((self.activeMetrics & metric) == 0) {
+    if (![self metricCanRun:metric atTime:now]) {
         return NO;
     }
 
@@ -244,8 +348,19 @@ const NSTimeInterval MPRefreshSchedulerNoPendingDelay = DBL_MAX;
     return now - lastSampleTime >= [self intervalForMetric:metric];
 }
 
+- (BOOL)metricCanRun:(MPRefreshMetric)metric atTime:(NSTimeInterval)now {
+    if ((self.activeMetrics & metric) == 0 ||
+        (self.pausedMetrics & metric) != 0) {
+        return NO;
+    }
+
+    NSTimeInterval deferredUntil = [self deferredUntilForMetric:metric];
+    return isnan(deferredUntil) || now >= deferredUntil;
+}
+
 - (NSTimeInterval)nextDelayAtTime:(NSTimeInterval)now {
-    if (self.activeMetrics == MPRefreshMetricNone) {
+    MPRefreshMetric schedulableMetrics = self.activeMetrics & ~self.pausedMetrics;
+    if (schedulableMetrics == MPRefreshMetricNone) {
         return MPRefreshSchedulerNoPendingDelay;
     }
 
@@ -258,22 +373,25 @@ const NSTimeInterval MPRefreshSchedulerNoPendingDelay = DBL_MAX;
     };
     for (NSUInteger index = 0; index < sizeof(metrics) / sizeof(metrics[0]); index += 1) {
         MPRefreshMetric metric = metrics[index];
-        if ((self.activeMetrics & metric) == 0) {
+        if ((schedulableMetrics & metric) == 0) {
             continue;
         }
 
+        NSTimeInterval metricDeadline;
         if (metric == MPRefreshMetricCPU && !isnan(self.cpuWarmUpDeadline)) {
-            delay = MIN(delay, MAX(self.cpuWarmUpDeadline - now, 0.0));
-            continue;
+            metricDeadline = self.cpuWarmUpDeadline;
+        } else {
+            NSTimeInterval lastSampleTime = [self lastSampleTimeForMetric:metric];
+            metricDeadline = isnan(lastSampleTime)
+                ? now
+                : lastSampleTime + [self intervalForMetric:metric];
         }
 
-        NSTimeInterval lastSampleTime = [self lastSampleTimeForMetric:metric];
-        if (isnan(lastSampleTime)) {
-            return 0.0;
+        NSTimeInterval deferredUntil = [self deferredUntilForMetric:metric];
+        if (!isnan(deferredUntil)) {
+            metricDeadline = MAX(metricDeadline, deferredUntil);
         }
-
-        NSTimeInterval metricDelay = [self intervalForMetric:metric] - (now - lastSampleTime);
-        delay = MIN(delay, MAX(metricDelay, 0.0));
+        delay = MIN(delay, MAX(metricDeadline - now, 0.0));
     }
     return delay;
 }
@@ -284,11 +402,46 @@ const NSTimeInterval MPRefreshSchedulerNoPendingDelay = DBL_MAX;
         case MPRefreshMetricRAM:
             return self.cpuRAMRefreshIntervalSeconds;
         case MPRefreshMetricTemperature:
-            return MPTemperatureRefreshInterval;
+            return self.temperatureRefreshIntervalSeconds;
         case MPRefreshMetricDisk:
-            return MPDiskRefreshInterval;
+            return self.diskRefreshIntervalSeconds;
         default:
             return MPRefreshSchedulerNoPendingDelay;
+    }
+}
+
+- (NSTimeInterval)deferredUntilForMetric:(MPRefreshMetric)metric {
+    switch (metric) {
+        case MPRefreshMetricCPU:
+            return self.cpuDeferredUntil;
+        case MPRefreshMetricRAM:
+            return self.ramDeferredUntil;
+        case MPRefreshMetricTemperature:
+            return self.temperatureDeferredUntil;
+        case MPRefreshMetricDisk:
+            return self.diskDeferredUntil;
+        default:
+            return NAN;
+    }
+}
+
+- (void)setDeferredUntil:(NSTimeInterval)deferredUntil
+                forMetric:(MPRefreshMetric)metric {
+    switch (metric) {
+        case MPRefreshMetricCPU:
+            self.cpuDeferredUntil = deferredUntil;
+            break;
+        case MPRefreshMetricRAM:
+            self.ramDeferredUntil = deferredUntil;
+            break;
+        case MPRefreshMetricTemperature:
+            self.temperatureDeferredUntil = deferredUntil;
+            break;
+        case MPRefreshMetricDisk:
+            self.diskDeferredUntil = deferredUntil;
+            break;
+        default:
+            break;
     }
 }
 

@@ -1,11 +1,19 @@
 #import "SettingsStore.h"
 
+#import <math.h>
+
 static NSString * const MPSettingShowCPU = @"showCPU";
 static NSString * const MPSettingShowRAM = @"showRAM";
 static NSString * const MPSettingShowTemperature = @"showTemperature";
 static NSString * const MPSettingShowDisk = @"showDisk";
 static NSString * const MPSettingTemperatureUnit = @"temperatureUnit";
 static NSString * const MPSettingCPURAMRefreshIntervalSeconds = @"cpuRAMRefreshIntervalSeconds";
+static NSString * const MPSettingTemperatureRefreshIntervalSeconds =
+    @"temperatureRefreshIntervalSeconds";
+static NSString * const MPSettingDiskRefreshIntervalSeconds =
+    @"diskRefreshIntervalSeconds";
+static NSString * const MPSettingHasCompletedOpenAtLoginPrompt =
+    @"hasCompletedOpenAtLoginPrompt";
 
 static NSString * const MPLegacyCPURefreshInterval = @"cpuRefreshInterval";
 static NSString * const MPLegacyRAMRefreshInterval = @"ramRefreshInterval";
@@ -15,9 +23,25 @@ static NSString * const MPLegacyDiskRefreshInterval = @"diskRefreshInterval";
 const NSTimeInterval MPCPURAMRefreshIntervalDefault = 3.0;
 const NSTimeInterval MPCPURAMRefreshIntervalFast = 1.0;
 const NSTimeInterval MPCPURAMRefreshIntervalSlow = 10.0;
+const NSTimeInterval MPTemperatureRefreshIntervalDefault = 30.0;
+const NSTimeInterval MPDiskRefreshIntervalDefault = 300.0;
 
 NSString * const MPTemperatureUnitCelsius = @"C";
 NSString * const MPTemperatureUnitFahrenheit = @"F";
+
+static BOOL MPIntervalIsIncludedIn(NSTimeInterval interval,
+                                   NSArray<NSNumber *> *supportedIntervals) {
+    if (!isfinite(interval)) {
+        return NO;
+    }
+
+    for (NSNumber *supportedInterval in supportedIntervals) {
+        if (interval == supportedInterval.doubleValue) {
+            return YES;
+        }
+    }
+    return NO;
+}
 
 @interface MPSettingsStore ()
 @property(nonatomic, strong) NSUserDefaults *userDefaults;
@@ -47,6 +71,8 @@ NSString * const MPTemperatureUnitFahrenheit = @"F";
         MPSettingShowDisk: @NO,
         MPSettingTemperatureUnit: MPTemperatureUnitCelsius,
         MPSettingCPURAMRefreshIntervalSeconds: @(MPCPURAMRefreshIntervalDefault),
+        MPSettingTemperatureRefreshIntervalSeconds: @(MPTemperatureRefreshIntervalDefault),
+        MPSettingDiskRefreshIntervalSeconds: @(MPDiskRefreshIntervalDefault),
     };
 }
 
@@ -117,10 +143,91 @@ NSString * const MPTemperatureUnitFahrenheit = @"F";
     [self.userDefaults setDouble:interval forKey:MPSettingCPURAMRefreshIntervalSeconds];
 }
 
++ (NSArray<NSNumber *> *)supportedCPURAMRefreshIntervals {
+    static NSArray<NSNumber *> *intervals;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        intervals = @[@1.0, @3.0, @10.0];
+    });
+    return intervals;
+}
+
++ (NSArray<NSNumber *> *)supportedTemperatureRefreshIntervals {
+    static NSArray<NSNumber *> *intervals;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        intervals = @[@1.0, @3.0, @10.0, @30.0, @60.0];
+    });
+    return intervals;
+}
+
++ (NSArray<NSNumber *> *)supportedDiskRefreshIntervals {
+    static NSArray<NSNumber *> *intervals;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        intervals = @[@60.0, @180.0, @300.0, @600.0];
+    });
+    return intervals;
+}
+
 + (BOOL)isValidCPURAMRefreshInterval:(NSTimeInterval)interval {
-    return interval == MPCPURAMRefreshIntervalFast ||
-        interval == MPCPURAMRefreshIntervalDefault ||
-        interval == MPCPURAMRefreshIntervalSlow;
+    return MPIntervalIsIncludedIn(interval, self.supportedCPURAMRefreshIntervals);
+}
+
++ (BOOL)isValidTemperatureRefreshInterval:(NSTimeInterval)interval {
+    return MPIntervalIsIncludedIn(interval, self.supportedTemperatureRefreshIntervals);
+}
+
++ (BOOL)isValidDiskRefreshInterval:(NSTimeInterval)interval {
+    return MPIntervalIsIncludedIn(interval, self.supportedDiskRefreshIntervals);
+}
+
+- (NSTimeInterval)temperatureRefreshIntervalSeconds {
+    NSTimeInterval interval =
+        [self.userDefaults doubleForKey:MPSettingTemperatureRefreshIntervalSeconds];
+    if (![self.class isValidTemperatureRefreshInterval:interval]) {
+        interval = MPTemperatureRefreshIntervalDefault;
+        [self.userDefaults setDouble:interval
+                              forKey:MPSettingTemperatureRefreshIntervalSeconds];
+    }
+    return interval;
+}
+
+- (void)setTemperatureRefreshIntervalSeconds:(NSTimeInterval)interval {
+    NSTimeInterval validatedInterval =
+        [self.class isValidTemperatureRefreshInterval:interval]
+        ? interval
+        : MPTemperatureRefreshIntervalDefault;
+    [self.userDefaults setDouble:validatedInterval
+                          forKey:MPSettingTemperatureRefreshIntervalSeconds];
+}
+
+- (NSTimeInterval)diskRefreshIntervalSeconds {
+    NSTimeInterval interval =
+        [self.userDefaults doubleForKey:MPSettingDiskRefreshIntervalSeconds];
+    if (![self.class isValidDiskRefreshInterval:interval]) {
+        interval = MPDiskRefreshIntervalDefault;
+        [self.userDefaults setDouble:interval forKey:MPSettingDiskRefreshIntervalSeconds];
+    }
+    return interval;
+}
+
+- (void)setDiskRefreshIntervalSeconds:(NSTimeInterval)interval {
+    NSTimeInterval validatedInterval =
+        [self.class isValidDiskRefreshInterval:interval]
+        ? interval
+        : MPDiskRefreshIntervalDefault;
+    [self.userDefaults setDouble:validatedInterval
+                          forKey:MPSettingDiskRefreshIntervalSeconds];
+}
+
+- (BOOL)hasCompletedOpenAtLoginPrompt {
+    return [self.userDefaults boolForKey:MPSettingHasCompletedOpenAtLoginPrompt];
+}
+
+- (void)setHasCompletedOpenAtLoginPrompt:(BOOL)hasCompletedOpenAtLoginPrompt {
+    [self.userDefaults setBool:hasCompletedOpenAtLoginPrompt
+                        forKey:MPSettingHasCompletedOpenAtLoginPrompt];
 }
 
 - (void)removeLegacyRefreshIntervalSettings {

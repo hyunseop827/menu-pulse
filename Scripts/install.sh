@@ -162,6 +162,10 @@ register_installed_login_item() {
   "$installed_bin_path" --register-login-item
 }
 
+mark_login_prompt_completed() {
+  /usr/bin/defaults write "$BUNDLE_ID" hasCompletedOpenAtLoginPrompt -bool true
+}
+
 open_installed_app() {
   local installed_app_path="$1"
   /usr/bin/open "$installed_app_path"
@@ -288,6 +292,12 @@ main() {
     login_message="Open at login enabled."
   else
     login_message="Open at login needs approval in System Settings."
+  fi
+
+  # The installer has already made the login-item choice explicit. Persist the
+  # one-time onboarding marker so the newly opened app does not ask again.
+  if ! mark_login_prompt_completed; then
+    echo "install: could not save the login prompt completion marker; the app may ask once at launch" >&2
   fi
 
   if ! open_installed_app "$INSTALL_APP_PATH"; then

@@ -84,6 +84,7 @@ xcrun clang \
   "$ROOT_DIR/Sources/MenuPulse/Monitors.m" \
   "$ROOT_DIR/Sources/MenuPulse/RefreshScheduler.m" \
   "$ROOT_DIR/Sources/MenuPulse/SettingsStore.m" \
+  "$ROOT_DIR/Sources/MenuPulse/SettingsWindowController.m" \
   "$ROOT_DIR/Sources/MenuPulse/TemperatureReader.m" \
   -o "$UI_TEST_BIN" \
   -framework AppKit \

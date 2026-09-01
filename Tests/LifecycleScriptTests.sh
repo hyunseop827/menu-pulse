@@ -194,6 +194,25 @@ test_install_validation_rejects_every_invalid_app_in_condition() (
   assert_contains "$case_dir/signature.log" "code signature verification failed"
 )
 
+test_install_persists_login_prompt_marker() (
+  # shellcheck source=../Scripts/install.sh
+  source "$ROOT_DIR/Scripts/install.sh"
+
+  local preference_dir="$TEST_ROOT/install-prompt-preferences"
+  local preference_path="$preference_dir/dev.hyunseop.MenuPulse.LifecyclePrompt.plist"
+  /bin/mkdir -p "$preference_dir"
+
+  # `defaults` can ignore CFFIXED_USER_HOME and leave an empty domain in the
+  # developer's real Preferences directory. An explicit temporary plist keeps
+  # this persistence check entirely inside TEST_ROOT.
+  BUNDLE_ID="$preference_path"
+  mark_login_prompt_completed
+  assert_equal \
+    "1" \
+    "$(/usr/bin/defaults read "$preference_path" hasCompletedOpenAtLoginPrompt)" \
+    "install did not persist the completed login prompt marker"
+)
+
 test_install_rollback_restores_previous_app() (
   # shellcheck source=../Scripts/install.sh
   source "$ROOT_DIR/Scripts/install.sh"
@@ -328,6 +347,11 @@ test_install_main_replaces_and_deduplicates() (
   }
   register_installed_login_item() {
     /usr/bin/printf 'register %s\n' "$1" >> "$call_log"
+    return 1
+  }
+  mark_login_prompt_completed() {
+    /usr/bin/printf '%s\n' "mark-login-prompt-completed" >> "$call_log"
+    return 1
   }
   open_installed_app() {
     /usr/bin/printf 'open %s\n' "$1" >> "$call_log"
@@ -347,8 +371,11 @@ test_install_main_replaces_and_deduplicates() (
   assert_contains "$call_log" "stop"
   assert_contains "$call_log" "unregister-existing"
   assert_contains "$call_log" "register $installed_app_resolved/Contents/MacOS/$EXECUTABLE_NAME"
+  assert_contains "$call_log" "mark-login-prompt-completed"
   assert_contains "$call_log" "open $installed_app_resolved"
   assert_contains "$case_dir/output.log" "could not fully remove previous login-item registrations"
+  assert_contains "$case_dir/output.log" "could not save the login prompt completion marker"
+  assert_contains "$case_dir/output.log" "Open at login needs approval in System Settings."
   assert_contains "$case_dir/output.log" "installed to $installed_app_resolved"
   if /usr/bin/find "$system_applications" -maxdepth 1 -name '.menu-pulse-install.*' -print -quit | /usr/bin/grep -q .; then
     fail_test "successful install left its staging directory"
@@ -783,6 +810,12 @@ test_measure_isolates_persistent_preferences() (
   if /usr/bin/find "$test_temp" -maxdepth 1 -name 'menu-pulse-benchmark-home.*' -print -quit | /usr/bin/grep -q .; then
     fail_test "measurement left its isolated preference home behind"
   fi
+  if /usr/bin/find "$test_temp" -maxdepth 1 -name 'menu-pulse-samples.*' -print -quit | /usr/bin/grep -q .; then
+    fail_test "measurement left raw process samples behind"
+  fi
+  if /usr/bin/find "$test_temp" -maxdepth 1 -name 'menu-pulse-measure.*' -print -quit | /usr/bin/grep -q .; then
+    fail_test "measurement left a raw application log behind"
+  fi
 )
 
 test_release_version_helpers() (
@@ -964,10 +997,11 @@ test_release_rejects_feature_branch() (
 
 run_test "install bundle validation and foreign-app refusal" test_install_bundle_validation_and_refusal
 run_test "install rejects every invalid app from conditional validation" test_install_validation_rejects_every_invalid_app_in_condition
+run_test "install persists the login prompt marker" test_install_persists_login_prompt_marker
 run_test "install rollback restores previous app" test_install_rollback_restores_previous_app
 run_test "install rollback survives a corrupt replacement" test_install_rollback_restores_after_corrupt_target
 run_test "install rollback preserves a backup after validation failure" test_install_rollback_preserves_backup_when_validation_fails
-run_test "install main safely replaces despite stale-login cleanup failure" test_install_main_replaces_and_deduplicates
+run_test "install main safely replaces despite noncritical setup failures" test_install_main_replaces_and_deduplicates
 run_test "uninstall foreign-app refusal" test_uninstall_bundle_refusal
 run_test "uninstall removes all scoped data" test_uninstall_removes_all_scoped_data
 run_test "uninstall login-only mode preserves apps and data" test_uninstall_login_only_preserves_apps_and_data

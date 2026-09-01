@@ -54,6 +54,22 @@ static void MPTestSettingsDefaultsAndPersistence(void) {
              @"temperature should default to Celsius");
     MPAssertInterval(store.cpuRAMRefreshIntervalSeconds, 3.0,
                      @"CPU and RAM should default to a three-second refresh");
+    MPAssertInterval(store.temperatureRefreshIntervalSeconds, 30.0,
+                     @"temperature should default to a thirty-second refresh");
+    MPAssertInterval(store.diskRefreshIntervalSeconds, 300.0,
+                     @"disk should default to a five-minute refresh");
+    MPAssert(!store.hasCompletedOpenAtLoginPrompt,
+             @"the login prompt should be incomplete for a new user");
+
+    MPAssert([[MPSettingsStore supportedCPURAMRefreshIntervals]
+                 isEqualToArray:@[@1.0, @3.0, @10.0]],
+             @"CPU and RAM should expose exactly the supported intervals");
+    MPAssert([[MPSettingsStore supportedTemperatureRefreshIntervals]
+                 isEqualToArray:@[@1.0, @3.0, @10.0, @30.0, @60.0]],
+             @"temperature should expose exactly the supported intervals");
+    MPAssert([[MPSettingsStore supportedDiskRefreshIntervals]
+                 isEqualToArray:@[@60.0, @180.0, @300.0, @600.0]],
+             @"disk should expose exactly the supported intervals");
 
     NSArray<NSString *> *legacyKeys = @[
         @"cpuRefreshInterval",
@@ -71,6 +87,9 @@ static void MPTestSettingsDefaultsAndPersistence(void) {
     store.showDisk = YES;
     store.temperatureUnit = MPTemperatureUnitFahrenheit;
     store.cpuRAMRefreshIntervalSeconds = 1.0;
+    store.temperatureRefreshIntervalSeconds = 10.0;
+    store.diskRefreshIntervalSeconds = 180.0;
+    store.hasCompletedOpenAtLoginPrompt = YES;
 
     MPSettingsStore *restored = [[MPSettingsStore alloc] initWithUserDefaults:defaults];
     MPAssert(!restored.showCPU && !restored.showRAM,
@@ -81,10 +100,31 @@ static void MPTestSettingsDefaultsAndPersistence(void) {
              @"Fahrenheit should persist");
     MPAssertInterval(restored.cpuRAMRefreshIntervalSeconds, 1.0,
                      @"one-second refresh should persist");
+    MPAssertInterval(restored.temperatureRefreshIntervalSeconds, 10.0,
+                     @"ten-second temperature refresh should persist");
+    MPAssertInterval(restored.diskRefreshIntervalSeconds, 180.0,
+                     @"three-minute disk refresh should persist");
+    MPAssert(restored.hasCompletedOpenAtLoginPrompt,
+             @"the completed login prompt marker should persist");
 
-    restored.cpuRAMRefreshIntervalSeconds = 10.0;
-    MPAssertInterval(restored.cpuRAMRefreshIntervalSeconds, 10.0,
-                     @"ten-second refresh should be accepted");
+    for (NSNumber *interval in MPSettingsStore.supportedCPURAMRefreshIntervals) {
+        restored.cpuRAMRefreshIntervalSeconds = interval.doubleValue;
+        MPAssertInterval(restored.cpuRAMRefreshIntervalSeconds,
+                         interval.doubleValue,
+                         @"every supported CPU and RAM interval should persist");
+    }
+    for (NSNumber *interval in MPSettingsStore.supportedTemperatureRefreshIntervals) {
+        restored.temperatureRefreshIntervalSeconds = interval.doubleValue;
+        MPAssertInterval(restored.temperatureRefreshIntervalSeconds,
+                         interval.doubleValue,
+                         @"every supported temperature interval should persist");
+    }
+    for (NSNumber *interval in MPSettingsStore.supportedDiskRefreshIntervals) {
+        restored.diskRefreshIntervalSeconds = interval.doubleValue;
+        MPAssertInterval(restored.diskRefreshIntervalSeconds,
+                         interval.doubleValue,
+                         @"every supported disk interval should persist");
+    }
 
 }
 
@@ -102,6 +142,43 @@ static void MPTestSettingsValidationAndReset(void) {
     MPAssertInterval(store.cpuRAMRefreshIntervalSeconds, 3.0,
                      @"an unsupported refresh setter value should use the default");
 
+    [defaults setDouble:-1.0 forKey:@"cpuRAMRefreshIntervalSeconds"];
+    MPAssertInterval(store.cpuRAMRefreshIntervalSeconds, 3.0,
+                     @"a negative stored CPU and RAM refresh should use its default");
+    [defaults setDouble:NAN forKey:@"cpuRAMRefreshIntervalSeconds"];
+    MPAssertInterval(store.cpuRAMRefreshIntervalSeconds, 3.0,
+                     @"a NaN stored CPU and RAM refresh should use its default");
+
+    [defaults setDouble:-1.0 forKey:@"temperatureRefreshIntervalSeconds"];
+    MPAssertInterval(store.temperatureRefreshIntervalSeconds, 30.0,
+                     @"a negative stored temperature refresh should use its default");
+    MPAssertInterval([defaults doubleForKey:@"temperatureRefreshIntervalSeconds"], 30.0,
+                     @"a negative stored temperature refresh should be repaired");
+
+    [defaults setDouble:NAN forKey:@"temperatureRefreshIntervalSeconds"];
+    MPAssertInterval(store.temperatureRefreshIntervalSeconds, 30.0,
+                     @"a NaN stored temperature refresh should use its default");
+
+    [defaults setDouble:10.0 forKey:@"temperatureRefreshIntervalSeconds"];
+    [defaults setDouble:-300.0 forKey:@"diskRefreshIntervalSeconds"];
+    MPAssertInterval(store.diskRefreshIntervalSeconds, 300.0,
+                     @"a negative stored disk refresh should use its default");
+    MPAssertInterval([defaults doubleForKey:@"diskRefreshIntervalSeconds"], 300.0,
+                     @"a negative stored disk refresh should be repaired");
+    MPAssertInterval(store.temperatureRefreshIntervalSeconds, 10.0,
+                     @"repairing disk should not alter a valid temperature interval");
+
+    [defaults setDouble:NAN forKey:@"diskRefreshIntervalSeconds"];
+    MPAssertInterval(store.diskRefreshIntervalSeconds, 300.0,
+                     @"a NaN stored disk refresh should use its default");
+
+    store.temperatureRefreshIntervalSeconds = 2.0;
+    store.diskRefreshIntervalSeconds = INFINITY;
+    MPAssertInterval(store.temperatureRefreshIntervalSeconds, 30.0,
+                     @"an unsupported temperature setter value should use its default");
+    MPAssertInterval(store.diskRefreshIntervalSeconds, 300.0,
+                     @"a non-finite disk setter value should use its default");
+
     [defaults setObject:@"Kelvin" forKey:@"temperatureUnit"];
     MPAssert([store.temperatureUnit isEqualToString:MPTemperatureUnitCelsius],
              @"an unsupported unit should fall back to Celsius");
@@ -113,6 +190,9 @@ static void MPTestSettingsValidationAndReset(void) {
     store.showDisk = YES;
     store.temperatureUnit = MPTemperatureUnitFahrenheit;
     store.cpuRAMRefreshIntervalSeconds = 10.0;
+    store.temperatureRefreshIntervalSeconds = 1.0;
+    store.diskRefreshIntervalSeconds = 60.0;
+    store.hasCompletedOpenAtLoginPrompt = YES;
     [store resetMetricSettings];
 
     MPAssert(store.showCPU && store.showRAM,
@@ -123,8 +203,14 @@ static void MPTestSettingsValidationAndReset(void) {
              @"reset should restore Celsius");
     MPAssertInterval(store.cpuRAMRefreshIntervalSeconds, 3.0,
                      @"reset should restore the three-second refresh");
+    MPAssertInterval(store.temperatureRefreshIntervalSeconds, 30.0,
+                     @"reset should restore the thirty-second temperature refresh");
+    MPAssertInterval(store.diskRefreshIntervalSeconds, 300.0,
+                     @"reset should restore the five-minute disk refresh");
     MPAssert([defaults boolForKey:@"openAtLogin"],
              @"reset should not change login item preferences");
+    MPAssert(store.hasCompletedOpenAtLoginPrompt,
+             @"resetting metric settings should preserve the login prompt marker");
 
 }
 
@@ -143,6 +229,12 @@ static void MPTestSchedulerIntervals(void) {
     clock.time = 100.0;
     NSMutableArray<NSNumber *> *callbacks = [NSMutableArray array];
     MPRefreshScheduler *scheduler = MPMakeScheduler(clock, callbacks);
+    MPAssertInterval(scheduler.cpuRAMRefreshIntervalSeconds, 3.0,
+                     @"the scheduler should default CPU and RAM to three seconds");
+    MPAssertInterval(scheduler.temperatureRefreshIntervalSeconds, 30.0,
+                     @"the scheduler should default temperature to thirty seconds");
+    MPAssertInterval(scheduler.diskRefreshIntervalSeconds, 300.0,
+                     @"the scheduler should default disk to five minutes");
     scheduler.activeMetrics = MPRefreshMetricAll;
     [scheduler start];
 
@@ -205,6 +297,175 @@ static void MPTestSchedulerIntervalChanges(void) {
     MPAssert(callbacks.lastObject.unsignedIntegerValue == MPRefreshMetricRAM,
              @"a newly enabled metric should sample immediately");
 
+    [scheduler stop];
+}
+
+static void MPTestSchedulerConfigurableTemperatureAndDiskIntervals(void) {
+    NSArray<NSNumber *> *temperatureIntervals =
+        MPSettingsStore.supportedTemperatureRefreshIntervals;
+    for (NSNumber *intervalNumber in temperatureIntervals) {
+        MPFakeMonotonicClock *clock = [[MPFakeMonotonicClock alloc] init];
+        clock.time = 100.0;
+        NSMutableArray<NSNumber *> *callbacks = [NSMutableArray array];
+        MPRefreshScheduler *scheduler = MPMakeScheduler(clock, callbacks);
+        scheduler.temperatureRefreshIntervalSeconds = intervalNumber.doubleValue;
+        scheduler.activeMetrics = MPRefreshMetricTemperature;
+        [scheduler start];
+
+        clock.time = 100.0 + intervalNumber.doubleValue - 0.1;
+        MPAssert([scheduler processDueMetrics] == MPRefreshMetricNone,
+                 @"temperature should not run before its selected interval");
+        clock.time = 100.0 + intervalNumber.doubleValue;
+        MPAssert([scheduler processDueMetrics] == MPRefreshMetricTemperature,
+                 @"temperature should run at each supported selected interval");
+        [scheduler stop];
+    }
+
+    NSArray<NSNumber *> *diskIntervals = MPSettingsStore.supportedDiskRefreshIntervals;
+    for (NSNumber *intervalNumber in diskIntervals) {
+        MPFakeMonotonicClock *clock = [[MPFakeMonotonicClock alloc] init];
+        clock.time = 200.0;
+        NSMutableArray<NSNumber *> *callbacks = [NSMutableArray array];
+        MPRefreshScheduler *scheduler = MPMakeScheduler(clock, callbacks);
+        scheduler.diskRefreshIntervalSeconds = intervalNumber.doubleValue;
+        scheduler.activeMetrics = MPRefreshMetricDisk;
+        [scheduler start];
+
+        clock.time = 200.0 + intervalNumber.doubleValue - 0.1;
+        MPAssert([scheduler processDueMetrics] == MPRefreshMetricNone,
+                 @"disk should not run before its selected interval");
+        clock.time = 200.0 + intervalNumber.doubleValue;
+        MPAssert([scheduler processDueMetrics] == MPRefreshMetricDisk,
+                 @"disk should run at each supported selected interval");
+        [scheduler stop];
+    }
+}
+
+static void MPTestSchedulerTemperatureAndDiskIntervalChanges(void) {
+    MPFakeMonotonicClock *clock = [[MPFakeMonotonicClock alloc] init];
+    NSMutableArray<NSNumber *> *callbacks = [NSMutableArray array];
+    MPRefreshScheduler *scheduler = MPMakeScheduler(clock, callbacks);
+    scheduler.activeMetrics = MPRefreshMetricTemperature | MPRefreshMetricDisk;
+    [scheduler start];
+
+    clock.time = 5.0;
+    scheduler.temperatureRefreshIntervalSeconds = 60.0;
+    MPAssert(callbacks.count == 1,
+             @"lengthening temperature refresh should not sample early");
+    MPAssertInterval(scheduler.nextDelayAtCurrentTime, 55.0,
+                     @"lengthening temperature should retain its last sample anchor");
+
+    scheduler.temperatureRefreshIntervalSeconds = 1.0;
+    MPAssert(callbacks.count == 2 &&
+                 callbacks.lastObject.unsignedIntegerValue == MPRefreshMetricTemperature,
+             @"shortening overdue temperature refresh should sample immediately");
+    MPAssertInterval([scheduler lastSampleTimeForMetric:MPRefreshMetricTemperature], 5.0,
+                     @"an immediate temperature sample should update its timestamp");
+
+    clock.time = 120.0;
+    scheduler.diskRefreshIntervalSeconds = 600.0;
+    MPAssert((callbacks.lastObject.unsignedIntegerValue & MPRefreshMetricDisk) == 0,
+             @"lengthening disk refresh should not sample disk early");
+    scheduler.diskRefreshIntervalSeconds = 60.0;
+    MPAssert((callbacks.lastObject.unsignedIntegerValue & MPRefreshMetricDisk) != 0,
+             @"shortening overdue disk refresh should sample immediately");
+    MPAssertInterval([scheduler lastSampleTimeForMetric:MPRefreshMetricDisk], 120.0,
+                     @"an immediate disk sample should update its timestamp");
+
+    scheduler.temperatureRefreshIntervalSeconds = 2.0;
+    scheduler.diskRefreshIntervalSeconds = NAN;
+    MPAssertInterval(scheduler.temperatureRefreshIntervalSeconds, 30.0,
+                     @"invalid temperature intervals should restore the default");
+    MPAssertInterval(scheduler.diskRefreshIntervalSeconds, 300.0,
+                     @"invalid disk intervals should restore the default");
+    [scheduler stop];
+}
+
+static void MPTestSchedulerTemperaturePauseDropsMissedTicks(void) {
+    MPFakeMonotonicClock *clock = [[MPFakeMonotonicClock alloc] init];
+    NSMutableArray<NSNumber *> *callbacks = [NSMutableArray array];
+    MPRefreshScheduler *scheduler = MPMakeScheduler(clock, callbacks);
+    scheduler.temperatureRefreshIntervalSeconds = 1.0;
+    scheduler.activeMetrics = MPRefreshMetricTemperature;
+    [scheduler start];
+    MPAssert(callbacks.count == 1,
+             @"temperature should start its first asynchronous request immediately");
+
+    [scheduler setMetric:MPRefreshMetricTemperature paused:YES];
+    MPAssert((scheduler.pausedMetrics & MPRefreshMetricTemperature) != 0,
+             @"an in-flight temperature request should be marked paused");
+    MPAssert(!scheduler.isTimerArmed,
+             @"a paused temperature-only scheduler should fully disarm its timer");
+    MPAssert(scheduler.nextDelayAtCurrentTime == MPRefreshSchedulerNoPendingDelay,
+             @"a paused temperature-only scheduler should have no deadline");
+
+    clock.time = 20.0;
+    MPAssert([scheduler processDueMetrics] == MPRefreshMetricNone,
+             @"temperature ticks missed during a read should not accumulate");
+    [scheduler setMetric:MPRefreshMetricTemperature paused:NO];
+    MPAssert(callbacks.count == 1,
+             @"resuming temperature should not catch up a missed tick immediately");
+    MPAssertInterval([scheduler lastSampleTimeForMetric:MPRefreshMetricTemperature], 20.0,
+                     @"temperature completion should become the new cadence anchor");
+    MPAssertInterval(scheduler.nextDelayAtCurrentTime, 1.0,
+                     @"temperature should wait a full interval after completion");
+
+    clock.time = 21.0;
+    MPAssert([scheduler processDueMetrics] == MPRefreshMetricTemperature,
+             @"temperature should resume one interval after completion");
+    [scheduler stop];
+}
+
+static void MPTestSchedulerPausedTemperatureLeavesOtherDeadlinesArmed(void) {
+    MPFakeMonotonicClock *clock = [[MPFakeMonotonicClock alloc] init];
+    NSMutableArray<NSNumber *> *callbacks = [NSMutableArray array];
+    MPRefreshScheduler *scheduler = MPMakeScheduler(clock, callbacks);
+    scheduler.temperatureRefreshIntervalSeconds = 1.0;
+    scheduler.activeMetrics = MPRefreshMetricCPU | MPRefreshMetricTemperature;
+    [scheduler start];
+    [scheduler setMetric:MPRefreshMetricTemperature paused:YES];
+
+    MPAssert(scheduler.isTimerArmed,
+             @"pausing temperature should leave an active CPU deadline armed");
+    MPAssertInterval(scheduler.nextDelayAtCurrentTime, 3.0,
+                     @"paused temperature should not create one-second wake-ups");
+    clock.time = 3.0;
+    MPAssert([scheduler processDueMetrics] == MPRefreshMetricCPU,
+             @"CPU should continue while temperature is paused");
+    [scheduler stop];
+}
+
+static void MPTestSchedulerTemperatureFailureDeferral(void) {
+    MPFakeMonotonicClock *clock = [[MPFakeMonotonicClock alloc] init];
+    NSMutableArray<NSNumber *> *callbacks = [NSMutableArray array];
+    MPRefreshScheduler *scheduler = MPMakeScheduler(clock, callbacks);
+    scheduler.temperatureRefreshIntervalSeconds = 1.0;
+    scheduler.activeMetrics = MPRefreshMetricTemperature;
+    [scheduler start];
+
+    [scheduler setMetric:MPRefreshMetricTemperature paused:YES];
+    [scheduler deferMetric:MPRefreshMetricTemperature forInterval:300.0];
+    [scheduler setMetric:MPRefreshMetricTemperature paused:NO];
+    MPAssertInterval(scheduler.nextDelayAtCurrentTime, 300.0,
+                     @"a failed temperature read should defer the scheduler for five minutes");
+
+    clock.time = 10.0;
+    scheduler.activeMetrics = MPRefreshMetricNone;
+    MPAssert(!scheduler.isTimerArmed,
+             @"disabling the deferred metric should disarm the timer");
+    clock.time = 100.0;
+    scheduler.activeMetrics = MPRefreshMetricTemperature;
+    MPAssert(callbacks.count == 1,
+             @"re-enabling temperature should not bypass its failure cooldown");
+    MPAssertInterval(scheduler.nextDelayAtCurrentTime, 200.0,
+                     @"temperature deferral should survive disable and re-enable");
+
+    clock.time = 299.9;
+    MPAssert([scheduler processDueMetrics] == MPRefreshMetricNone,
+             @"temperature should remain deferred for the full cooldown");
+    clock.time = 300.0;
+    MPAssert([scheduler processDueMetrics] == MPRefreshMetricTemperature,
+             @"temperature should retry when the cooldown expires");
     [scheduler stop];
 }
 
@@ -393,6 +654,11 @@ int main(void) {
         MPTestSettingsValidationAndReset();
         MPTestSchedulerIntervals();
         MPTestSchedulerIntervalChanges();
+        MPTestSchedulerConfigurableTemperatureAndDiskIntervals();
+        MPTestSchedulerTemperatureAndDiskIntervalChanges();
+        MPTestSchedulerTemperaturePauseDropsMissedTicks();
+        MPTestSchedulerPausedTemperatureLeavesOtherDeadlinesArmed();
+        MPTestSchedulerTemperatureFailureDeferral();
         MPTestSchedulerCPUWarmUp();
         MPTestSchedulerCPUWarmUpRejoinsRAMCadence();
         MPTestSchedulerLateRAMActivationRejoinsCPUCadence();

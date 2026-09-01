@@ -1,4 +1,5 @@
 #import "Monitors.h"
+#import "TemperatureReader.h"
 
 #import <Foundation/Foundation.h>
 #import <mach/mach.h>
@@ -80,6 +81,24 @@ static void MPTestDiskSnapshot(void) {
     MPAssert(usage.doubleValue >= 0.0 && usage.doubleValue <= 100.0,
              @"disk usage should be between zero and one hundred percent");
     MPAssert(availableBytes > 0, @"disk snapshot should include available bytes");
+
+    availableBytes = UINT64_MAX;
+    NSNumber *missingUsage = [MPDiskMonitor usagePercentForPath:@"/path/that/does/not/exist"
+                                                 availableBytes:&availableBytes];
+    MPAssert(missingUsage == nil, @"an unavailable disk path should not report usage");
+    MPAssert(availableBytes == 0,
+             @"a failed disk snapshot should clear its available byte result");
+}
+
+static void MPTestTemperatureCooldownCalculation(void) {
+    MPAssert(MPTemperatureRetryAllowedForInterval(100.0, NAN, 300.0),
+             @"temperature should retry when there is no prior failure");
+    MPAssert(!MPTemperatureRetryAllowedForInterval(399.999, 100.0, 300.0),
+             @"temperature should remain in cooldown before the boundary");
+    MPAssert(MPTemperatureRetryAllowedForInterval(400.0, 100.0, 300.0),
+             @"temperature should retry at the cooldown boundary");
+    MPAssert(!MPTemperatureRetryAllowedForInterval(99.0, 100.0, 300.0),
+             @"a regressed clock should not bypass the temperature cooldown");
 }
 
 int main(void) {
@@ -89,6 +108,7 @@ int main(void) {
         MPTestCPUTickDelta();
         MPTestMemoryRange();
         MPTestDiskSnapshot();
+        MPTestTemperatureCooldownCalculation();
 
         if (MPFailureCount > 0) {
             fprintf(stderr, "%lu monitor test(s) failed\n", (unsigned long)MPFailureCount);

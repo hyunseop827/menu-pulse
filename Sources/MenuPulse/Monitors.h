@@ -13,8 +13,6 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 
 @interface MPDiskMonitor : NSObject
-+ (nullable NSNumber *)usagePercent;
-+ (nullable NSNumber *)usagePercentForPath:(NSString *)path;
 + (nullable NSNumber *)usagePercentForPath:(NSString *)path
                             availableBytes:(nullable uint64_t *)availableBytes;
 @end

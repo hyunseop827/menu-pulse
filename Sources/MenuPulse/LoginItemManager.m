@@ -6,10 +6,16 @@
 static NSString * const MPLegacyLoginItemLabel = @"dev.hyunseop.MenuPulse";
 
 @interface MPLoginItemManager ()
+@property(nonatomic, strong) dispatch_queue_t operationQueue;
+- (BOOL)performSetEnabled:(BOOL)enabled;
+- (BOOL)performUnregisterModernLoginItem;
 - (BOOL)waitForModernLoginItemToBecomeUnregistered;
+- (BOOL)isOnOperationQueue;
 @end
 
 @implementation MPLoginItemManager
+
+static const void *MPLoginItemOperationQueueKey = &MPLoginItemOperationQueueKey;
 
 - (instancetype)init {
     return [self initWithLegacyMigrationEnabled:YES];
@@ -17,8 +23,20 @@ static NSString * const MPLegacyLoginItemLabel = @"dev.hyunseop.MenuPulse";
 
 - (instancetype)initWithLegacyMigrationEnabled:(BOOL)legacyMigrationEnabled {
     self = [super init];
-    if (self && legacyMigrationEnabled) {
-        [self migrateLegacyLoginItemIfPossible];
+    if (self) {
+        _operationQueue = dispatch_queue_create(
+            "MenuPulse.login-item-manager",
+            DISPATCH_QUEUE_SERIAL
+        );
+        dispatch_queue_set_specific(
+            _operationQueue,
+            MPLoginItemOperationQueueKey,
+            (__bridge void *)self,
+            NULL
+        );
+        if (legacyMigrationEnabled) {
+            [self migrateLegacyLoginItemIfPossible];
+        }
     }
     return self;
 }
@@ -32,6 +50,29 @@ static NSString * const MPLegacyLoginItemLabel = @"dev.hyunseop.MenuPulse";
 }
 
 - (BOOL)setEnabled:(BOOL)enabled {
+    __block BOOL success = NO;
+    void (^operation)(void) = ^{
+        success = [self performSetEnabled:enabled];
+    };
+    if ([self isOnOperationQueue]) {
+        operation();
+    } else {
+        dispatch_sync(self.operationQueue, operation);
+    }
+    return success;
+}
+
+- (void)setEnabled:(BOOL)enabled completion:(MPLoginItemUpdateCompletion)completion {
+    MPLoginItemUpdateCompletion copiedCompletion = [completion copy];
+    dispatch_async(self.operationQueue, ^{
+        BOOL success = [self performSetEnabled:enabled];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            copiedCompletion(success);
+        });
+    });
+}
+
+- (BOOL)performSetEnabled:(BOOL)enabled {
     if (enabled) {
         SMAppService *service = SMAppService.mainAppService;
         if (service.status == SMAppServiceStatusEnabled) {
@@ -51,13 +92,26 @@ static NSString * const MPLegacyLoginItemLabel = @"dev.hyunseop.MenuPulse";
         return didEnable;
     }
 
-    if (![self unregisterModernLoginItem]) {
+    if (![self performUnregisterModernLoginItem]) {
         return NO;
     }
     return [self removeLegacyLoginItem];
 }
 
 - (BOOL)unregisterModernLoginItem {
+    __block BOOL success = NO;
+    void (^operation)(void) = ^{
+        success = [self performUnregisterModernLoginItem];
+    };
+    if ([self isOnOperationQueue]) {
+        operation();
+    } else {
+        dispatch_sync(self.operationQueue, operation);
+    }
+    return success;
+}
+
+- (BOOL)performUnregisterModernLoginItem {
     SMAppService *service = SMAppService.mainAppService;
     if (service.status == SMAppServiceStatusNotRegistered) {
         return YES;
@@ -83,6 +137,10 @@ static NSString * const MPLegacyLoginItemLabel = @"dev.hyunseop.MenuPulse";
         }
     }
     return NO;
+}
+
+- (BOOL)isOnOperationQueue {
+    return dispatch_get_specific(MPLoginItemOperationQueueKey) == (__bridge void *)self;
 }
 
 - (void)openSystemSettings {

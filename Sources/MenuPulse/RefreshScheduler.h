@@ -12,8 +12,6 @@ typedef NS_OPTIONS(NSUInteger, MPRefreshMetric) {
         MPRefreshMetricTemperature | MPRefreshMetricDisk,
 };
 
-FOUNDATION_EXPORT const NSTimeInterval MPTemperatureRefreshInterval;
-FOUNDATION_EXPORT const NSTimeInterval MPDiskRefreshInterval;
 FOUNDATION_EXPORT const NSTimeInterval MPRefreshSchedulerNoPendingDelay;
 
 @protocol MPMonotonicClock <NSObject>
@@ -35,6 +33,9 @@ typedef void (^MPRefreshDueHandler)(MPRefreshMetric dueMetrics);
 
 @property(nonatomic) MPRefreshMetric activeMetrics;
 @property(nonatomic) NSTimeInterval cpuRAMRefreshIntervalSeconds;
+@property(nonatomic) NSTimeInterval temperatureRefreshIntervalSeconds;
+@property(nonatomic) NSTimeInterval diskRefreshIntervalSeconds;
+@property(nonatomic, readonly) MPRefreshMetric pausedMetrics;
 @property(nonatomic, readonly, getter=isRunning) BOOL running;
 @property(nonatomic, readonly, getter=isTimerArmed) BOOL timerArmed;
 
@@ -54,6 +55,15 @@ typedef void (^MPRefreshDueHandler)(MPRefreshMetric dueMetrics);
 
 /// Makes the selected active metrics due on the next evaluation.
 - (void)invalidateLastSampleForMetrics:(MPRefreshMetric)metrics;
+
+/// Excludes an in-flight asynchronous metric from timer deadlines. Resuming a
+/// metric records the completion time as its new cadence anchor, dropping any
+/// deadlines missed while the metric was paused.
+- (void)setMetric:(MPRefreshMetric)metric paused:(BOOL)paused;
+
+/// Prevents the selected metrics from becoming due before the supplied
+/// monotonic interval elapses. Deferrals survive metric disable/enable cycles.
+- (void)deferMetric:(MPRefreshMetric)metric forInterval:(NSTimeInterval)interval;
 
 - (MPRefreshMetric)dueMetricsAtCurrentTime;
 - (NSTimeInterval)nextDelayAtCurrentTime;
