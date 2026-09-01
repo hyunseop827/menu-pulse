@@ -4,6 +4,7 @@
 #import <IOKit/hidsystem/IOHIDEventSystemClient.h>
 #import <IOKit/hidsystem/IOHIDServiceClient.h>
 #import <Foundation/Foundation.h>
+#import <math.h>
 
 typedef CFTypeRef IOHIDEventRef;
 
@@ -18,6 +19,15 @@ extern IOHIDEventRef _Nullable IOHIDServiceClientCopyEvent(
 extern double IOHIDEventGetFloatValue(IOHIDEventRef event, int32_t field);
 
 static const NSTimeInterval MPTemperatureFailureRetryInterval = 300.0;
+
+BOOL MPTemperatureRetryAllowed(NSTimeInterval now, NSTimeInterval lastFailureTime) {
+    return isnan(lastFailureTime) ||
+        now - lastFailureTime >= MPTemperatureFailureRetryInterval;
+}
+
+static NSTimeInterval MPTemperatureMonotonicTime(void) {
+    return NSProcessInfo.processInfo.systemUptime;
+}
 
 @interface MPHIDSensor : NSObject
 @property(nonatomic, assign, readonly) IOHIDServiceClientRef service;
@@ -51,7 +61,9 @@ static const NSTimeInterval MPTemperatureFailureRetryInterval = 300.0;
 @interface MPHIDTemperatureReader ()
 @property(nonatomic, assign) IOHIDEventSystemClientRef client;
 @property(nonatomic, copy, nullable) NSArray<MPHIDSensor *> *sensors;
-@property(nonatomic, strong) NSDate *lastFullFailure;
+@property(nonatomic) NSTimeInterval lastFullFailureTime;
+- (BOOL)initializeClient;
+- (void)invalidateClient;
 @end
 
 @implementation MPHIDTemperatureReader
@@ -59,14 +71,9 @@ static const NSTimeInterval MPTemperatureFailureRetryInterval = 300.0;
 - (instancetype)init {
     self = [super init];
     if (self) {
-        _lastFullFailure = [NSDate distantPast];
-        _client = IOHIDEventSystemClientCreate(kCFAllocatorDefault);
-        if (_client) {
-            NSDictionary *matching = @{
-                @"PrimaryUsagePage": @0xff00,
-                @"PrimaryUsage": @5,
-            };
-            IOHIDEventSystemClientSetMatching(_client, (__bridge CFDictionaryRef)matching);
+        _lastFullFailureTime = NAN;
+        if (![self initializeClient]) {
+            _lastFullFailureTime = MPTemperatureMonotonicTime();
         }
     }
     return self;
@@ -79,15 +86,20 @@ static const NSTimeInterval MPTemperatureFailureRetryInterval = 300.0;
 }
 
 - (NSNumber *)temperatureCelsius {
-    NSDate *now = [NSDate date];
-    if (!self.sensors && [now timeIntervalSinceDate:self.lastFullFailure] < MPTemperatureFailureRetryInterval) {
+    NSTimeInterval now = MPTemperatureMonotonicTime();
+    if (!self.sensors && !MPTemperatureRetryAllowed(now, self.lastFullFailureTime)) {
+        return nil;
+    }
+
+    if (!self.client && ![self initializeClient]) {
+        self.lastFullFailureTime = now;
         return nil;
     }
 
     NSArray<MPHIDSensor *> *activeSensors = self.sensors ?: [self loadSensors];
     if (activeSensors.count == 0) {
-        self.sensors = nil;
-        self.lastFullFailure = now;
+        [self invalidateClient];
+        self.lastFullFailureTime = now;
         return nil;
     }
 
@@ -105,13 +117,41 @@ static const NSTimeInterval MPTemperatureFailureRetryInterval = 300.0;
     }
 
     if (!hottestValue) {
-        self.sensors = nil;
-        self.lastFullFailure = now;
+        [self invalidateClient];
+        self.lastFullFailureTime = now;
         return nil;
     }
 
     self.sensors = activeSensors;
+    self.lastFullFailureTime = NAN;
     return hottestValue;
+}
+
+- (BOOL)initializeClient {
+    if (self.client) {
+        return YES;
+    }
+
+    IOHIDEventSystemClientRef client = IOHIDEventSystemClientCreate(kCFAllocatorDefault);
+    if (!client) {
+        return NO;
+    }
+
+    NSDictionary *matching = @{
+        @"PrimaryUsagePage": @0xff00,
+        @"PrimaryUsage": @5,
+    };
+    IOHIDEventSystemClientSetMatching(client, (__bridge CFDictionaryRef)matching);
+    self.client = client;
+    return YES;
+}
+
+- (void)invalidateClient {
+    self.sensors = nil;
+    if (self.client) {
+        CFRelease(self.client);
+        self.client = NULL;
+    }
 }
 
 - (NSArray<MPHIDSensor *> *)loadSensors {
@@ -206,6 +246,8 @@ typedef struct {
     MPSMCBytes bytes;
 } MPSMCParamStruct;
 
+static const uint8_t MPSMCKeyNotFoundResult = 0x84;
+
 static uint32_t MPSMCCode(NSString *value) {
     uint32_t result = 0;
     NSData *data = [value dataUsingEncoding:NSUTF8StringEncoding];
@@ -228,7 +270,8 @@ static uint32_t MPSMCCode(NSString *value) {
 @interface MPSMCReader ()
 @property(nonatomic) io_connect_t connection;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSValue *> *keyInfoCache;
-@property(nonatomic, strong) NSDate *lastFullFailure;
+@property(nonatomic, strong) NSMutableSet<NSString *> *missingKeyCache;
+@property(nonatomic) NSTimeInterval lastFullFailureTime;
 @property(nonatomic, copy) NSArray<NSString *> *temperatureKeys;
 @end
 
@@ -256,7 +299,8 @@ static uint32_t MPSMCCode(NSString *value) {
     if (self) {
         _connection = openedConnection;
         _keyInfoCache = [NSMutableDictionary dictionary];
-        _lastFullFailure = [NSDate distantPast];
+        _missingKeyCache = [NSMutableSet set];
+        _lastFullFailureTime = NAN;
         _temperatureKeys = @[
             @"TC0P", @"TC0E", @"TC0D", @"TCXC", @"TCXc",
             @"Tp09", @"Tp0T", @"Tp01", @"Tp05",
@@ -273,8 +317,8 @@ static uint32_t MPSMCCode(NSString *value) {
 }
 
 - (NSNumber *)temperatureCelsius {
-    NSDate *now = [NSDate date];
-    if ([now timeIntervalSinceDate:self.lastFullFailure] < MPTemperatureFailureRetryInterval) {
+    NSTimeInterval now = MPTemperatureMonotonicTime();
+    if (!MPTemperatureRetryAllowed(now, self.lastFullFailureTime)) {
         return nil;
     }
 
@@ -290,10 +334,11 @@ static uint32_t MPSMCCode(NSString *value) {
     }
 
     if (hottestValue) {
+        self.lastFullFailureTime = NAN;
         return hottestValue;
     }
 
-    self.lastFullFailure = now;
+    self.lastFullFailureTime = now;
     return nil;
 }
 
@@ -335,6 +380,10 @@ static uint32_t MPSMCCode(NSString *value) {
 }
 
 - (NSData *)readKey:(NSString *)key type:(uint32_t *)type {
+    if ([self.missingKeyCache containsObject:key]) {
+        return nil;
+    }
+
     MPSMCParamStruct input = {0};
     MPSMCParamStruct output = {0};
     MPSMCKeyInfo keyInfo = {0};
@@ -346,7 +395,15 @@ static uint32_t MPSMCCode(NSString *value) {
         input.key = MPSMCCode(key);
         input.data8 = 9;
 
-        if ([self callWithInput:&input output:&output] != kIOReturnSuccess || output.result != 0) {
+        kern_return_t result = [self callWithInput:&input output:&output];
+        if (result != kIOReturnSuccess) {
+            return nil;
+        }
+
+        if (output.result != 0) {
+            if (output.result == MPSMCKeyNotFoundResult) {
+                [self.missingKeyCache addObject:key];
+            }
             return nil;
         }
 
@@ -360,7 +417,13 @@ static uint32_t MPSMCCode(NSString *value) {
     input.keyInfo = keyInfo;
     input.data8 = 5;
 
-    if ([self callWithInput:&input output:&output] != kIOReturnSuccess || output.result != 0) {
+    if ([self callWithInput:&input output:&output] != kIOReturnSuccess) {
+        return nil;
+    }
+    if (output.result != 0) {
+        if (output.result == MPSMCKeyNotFoundResult) {
+            [self.missingKeyCache addObject:key];
+        }
         return nil;
     }
 
@@ -389,7 +452,7 @@ static uint32_t MPSMCCode(NSString *value) {
 @interface MPTemperatureReader ()
 @property(nonatomic, strong) MPHIDTemperatureReader *hidReader;
 @property(nonatomic, strong, nullable) MPSMCReader *smcReader;
-@property(nonatomic) BOOL didInitializeSMCReader;
+@property(nonatomic) NSTimeInterval lastSMCFailureTime;
 @property(nonatomic) dispatch_queue_t queue;
 @end
 
@@ -399,6 +462,7 @@ static uint32_t MPSMCCode(NSString *value) {
     self = [super init];
     if (self) {
         _hidReader = [[MPHIDTemperatureReader alloc] init];
+        _lastSMCFailureTime = NAN;
         _queue = dispatch_queue_create("MenuPulse.temperature-reader", DISPATCH_QUEUE_SERIAL);
     }
     return self;
@@ -410,7 +474,20 @@ static uint32_t MPSMCCode(NSString *value) {
         return hidTemperature;
     }
 
-    return [[self activeSMCReader] temperatureCelsius];
+    MPSMCReader *reader = [self activeSMCReader];
+    if (!reader) {
+        return nil;
+    }
+
+    NSNumber *smcTemperature = [reader temperatureCelsius];
+    if (!smcTemperature) {
+        // A connected reader can become unusable after sleep or an IOKit
+        // failure. Drop the connection so the next post-cooldown attempt
+        // creates a fresh reader instead of retrying a dead one.
+        self.smcReader = nil;
+        self.lastSMCFailureTime = MPTemperatureMonotonicTime();
+    }
+    return smcTemperature;
 }
 
 - (void)temperatureCelsiusAsync:(MPTemperatureCompletion)completion {
@@ -424,11 +501,19 @@ static uint32_t MPSMCCode(NSString *value) {
 }
 
 - (MPSMCReader *)activeSMCReader {
-    if (!self.didInitializeSMCReader) {
-        self.smcReader = [[MPSMCReader alloc] init];
-        self.didInitializeSMCReader = YES;
+    if (self.smcReader) {
+        return self.smcReader;
     }
 
+    NSTimeInterval now = MPTemperatureMonotonicTime();
+    if (!MPTemperatureRetryAllowed(now, self.lastSMCFailureTime)) {
+        return nil;
+    }
+
+    self.smcReader = [[MPSMCReader alloc] init];
+    if (!self.smcReader) {
+        self.lastSMCFailureTime = now;
+    }
     return self.smcReader;
 }
 

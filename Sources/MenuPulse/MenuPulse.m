@@ -2,40 +2,26 @@
 
 #import "LoginItemManager.h"
 #import "Monitors.h"
+#import "RefreshScheduler.h"
+#import "SettingsStore.h"
 #import "TemperatureReader.h"
 
 #import <AppKit/AppKit.h>
 
-static const NSTimeInterval MPDefaultCPURefreshInterval = 10.0;
-static const NSTimeInterval MPDefaultRAMRefreshInterval = 10.0;
-static const NSTimeInterval MPDefaultTemperatureRefreshInterval = 30.0;
-static const NSTimeInterval MPDefaultDiskRefreshInterval = 300.0;
-static const NSTimeInterval MPStartupWarmUpDelay = 1.0;
-
-static NSString * const MPSettingShowCPU = @"showCPU";
-static NSString * const MPSettingShowTemperature = @"showTemperature";
-static NSString * const MPSettingShowRAM = @"showRAM";
-static NSString * const MPSettingShowDisk = @"showDisk";
-static NSString * const MPSettingTemperatureUnit = @"temperatureUnit";
-static NSString * const MPTemperatureUnitCelsius = @"C";
-static NSString * const MPTemperatureUnitFahrenheit = @"F";
-
 @interface MPMenuPulse () <NSWindowDelegate>
 @property(nonatomic, strong) NSStatusItem *statusItem;
 @property(nonatomic, strong) MPLoginItemManager *loginItemManager;
+@property(nonatomic, strong) MPSettingsStore *settingsStore;
+@property(nonatomic, strong) MPRefreshScheduler *refreshScheduler;
 @property(nonatomic, strong) MPCPUMonitor *cpuMonitor;
 @property(nonatomic, strong, nullable) MPTemperatureReader *temperatureReader;
-@property(nonatomic, strong, nullable) NSTimer *timer;
 @property(nonatomic, strong, nullable) NSNumber *cachedCPU;
 @property(nonatomic, strong, nullable) NSNumber *cachedRAM;
 @property(nonatomic, strong, nullable) NSNumber *cachedTemperature;
 @property(nonatomic, strong, nullable) NSNumber *cachedDisk;
 @property(nonatomic, strong, nullable) NSNumber *cachedDiskAvailableBytes;
-@property(nonatomic, strong) NSDate *lastCPURead;
-@property(nonatomic, strong) NSDate *lastRAMRead;
-@property(nonatomic, strong) NSDate *lastTemperatureRead;
-@property(nonatomic, strong) NSDate *lastDiskRead;
 @property(nonatomic) BOOL temperatureReadInFlight;
+@property(nonatomic) NSUInteger temperatureRequestGeneration;
 @property(nonatomic) BOOL cachedLoginEnabled;
 @property(nonatomic, copy) NSArray<NSString *> *lastRenderedRows;
 @property(nonatomic, strong, nullable) NSWindow *settingsWindow;
@@ -44,21 +30,24 @@ static NSString * const MPTemperatureUnitFahrenheit = @"F";
 @property(nonatomic, weak, nullable) NSButton *ramCheckbox;
 @property(nonatomic, weak, nullable) NSButton *diskCheckbox;
 @property(nonatomic, weak, nullable) NSButton *loginCheckbox;
+@property(nonatomic, weak, nullable) NSPopUpButton *cpuRAMRefreshPopup;
 @property(nonatomic, weak, nullable) NSPopUpButton *temperatureUnitPopup;
 @end
 
 @implementation MPMenuPulse
 
 - (instancetype)init {
+    return [self initWithLoginItemMigrationEnabled:YES];
+}
+
+- (instancetype)initWithLoginItemMigrationEnabled:(BOOL)loginItemMigrationEnabled {
     self = [super init];
     if (self) {
         _statusItem = [NSStatusBar.systemStatusBar statusItemWithLength:NSVariableStatusItemLength];
-        _loginItemManager = [[MPLoginItemManager alloc] init];
+        _loginItemManager = [[MPLoginItemManager alloc]
+            initWithLegacyMigrationEnabled:loginItemMigrationEnabled];
+        _settingsStore = [[MPSettingsStore alloc] init];
         _cpuMonitor = [[MPCPUMonitor alloc] init];
-        _lastCPURead = [NSDate distantPast];
-        _lastRAMRead = [NSDate distantPast];
-        _lastTemperatureRead = [NSDate distantPast];
-        _lastDiskRead = [NSDate distantPast];
         _lastRenderedRows = @[];
     }
     return self;
@@ -66,14 +55,6 @@ static NSString * const MPTemperatureUnitFahrenheit = @"F";
 
 - (void)start {
     [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
-
-    [NSUserDefaults.standardUserDefaults registerDefaults:@{
-        MPSettingShowCPU: @YES,
-        MPSettingShowTemperature: @NO,
-        MPSettingShowRAM: @YES,
-        MPSettingShowDisk: @NO,
-        MPSettingTemperatureUnit: MPTemperatureUnitCelsius,
-    }];
 
     self.cachedLoginEnabled = self.loginItemManager.isEnabled;
 
@@ -83,54 +64,62 @@ static NSString * const MPTemperatureUnitFahrenheit = @"F";
     button.action = @selector(showSettings);
     button.toolTip = @"Menu Pulse Settings";
 
-    [self refreshWithForce:YES];
-    [self prepareCPUWarmUp];
-    [self scheduleNextRefresh];
+    __weak typeof(self) weakSelf = self;
+    self.refreshScheduler = [[MPRefreshScheduler alloc] initWithDueHandler:^(MPRefreshMetric dueMetrics) {
+        [weakSelf refreshMetrics:dueMetrics];
+    }];
+    self.refreshScheduler.cpuRAMRefreshIntervalSeconds = self.cpuRAMRefreshIntervalSeconds;
+    self.refreshScheduler.activeMetrics = [self activeRefreshMetrics];
+    [self.refreshScheduler start];
+    [self updateStatusImage];
 }
 
 - (BOOL)showCPU {
-    return [NSUserDefaults.standardUserDefaults boolForKey:MPSettingShowCPU];
+    return self.settingsStore.showCPU;
 }
 
 - (void)setShowCPU:(BOOL)value {
-    [NSUserDefaults.standardUserDefaults setBool:value forKey:MPSettingShowCPU];
+    self.settingsStore.showCPU = value;
 }
 
 - (BOOL)showTemperature {
-    return [NSUserDefaults.standardUserDefaults boolForKey:MPSettingShowTemperature];
+    return self.settingsStore.showTemperature;
 }
 
 - (void)setShowTemperature:(BOOL)value {
-    [NSUserDefaults.standardUserDefaults setBool:value forKey:MPSettingShowTemperature];
+    self.settingsStore.showTemperature = value;
 }
 
 - (BOOL)showRAM {
-    return [NSUserDefaults.standardUserDefaults boolForKey:MPSettingShowRAM];
+    return self.settingsStore.showRAM;
 }
 
 - (void)setShowRAM:(BOOL)value {
-    [NSUserDefaults.standardUserDefaults setBool:value forKey:MPSettingShowRAM];
+    self.settingsStore.showRAM = value;
 }
 
 - (BOOL)showDisk {
-    return [NSUserDefaults.standardUserDefaults boolForKey:MPSettingShowDisk];
+    return self.settingsStore.showDisk;
 }
 
 - (void)setShowDisk:(BOOL)value {
-    [NSUserDefaults.standardUserDefaults setBool:value forKey:MPSettingShowDisk];
+    self.settingsStore.showDisk = value;
 }
 
 - (NSString *)temperatureUnit {
-    NSString *value = [NSUserDefaults.standardUserDefaults stringForKey:MPSettingTemperatureUnit];
-    if ([value isEqualToString:MPTemperatureUnitFahrenheit]) {
-        return MPTemperatureUnitFahrenheit;
-    }
-
-    return MPTemperatureUnitCelsius;
+    return self.settingsStore.temperatureUnit;
 }
 
 - (void)setTemperatureUnit:(NSString *)value {
-    [NSUserDefaults.standardUserDefaults setObject:value forKey:MPSettingTemperatureUnit];
+    self.settingsStore.temperatureUnit = value;
+}
+
+- (NSTimeInterval)cpuRAMRefreshIntervalSeconds {
+    return self.settingsStore.cpuRAMRefreshIntervalSeconds;
+}
+
+- (void)setCpuRAMRefreshIntervalSeconds:(NSTimeInterval)value {
+    self.settingsStore.cpuRAMRefreshIntervalSeconds = value;
 }
 
 - (void)showSettings {
@@ -146,7 +135,7 @@ static NSString * const MPTemperatureUnitFahrenheit = @"F";
 
 - (NSWindow *)makeSettingsWindow {
     NSWindow *window = [[NSWindow alloc]
-        initWithContentRect:NSMakeRect(0, 0, 360, 248)
+        initWithContentRect:NSMakeRect(0, 0, 360, 330)
                   styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable)
                     backing:NSBackingStoreBuffered
                       defer:NO];
@@ -172,6 +161,7 @@ static NSString * const MPTemperatureUnitFahrenheit = @"F";
     NSButton *temperature = [NSButton checkboxWithTitle:@"Temperature" target:self action:@selector(settingsChanged)];
     NSButton *disk = [NSButton checkboxWithTitle:@"Disk usage" target:self action:@selector(settingsChanged)];
     NSButton *login = [NSButton checkboxWithTitle:@"Open at login" target:self action:@selector(loginChanged)];
+    NSPopUpButton *cpuRAMRefreshPopup = [self makeCPURAMRefreshPopup];
     NSPopUpButton *temperatureUnitPopup = [self makeTemperatureUnitPopup];
 
     self.cpuCheckbox = cpu;
@@ -179,6 +169,7 @@ static NSString * const MPTemperatureUnitFahrenheit = @"F";
     self.temperatureCheckbox = temperature;
     self.diskCheckbox = disk;
     self.loginCheckbox = login;
+    self.cpuRAMRefreshPopup = cpuRAMRefreshPopup;
     self.temperatureUnitPopup = temperatureUnitPopup;
 
     [root addArrangedSubview:header];
@@ -187,6 +178,7 @@ static NSString * const MPTemperatureUnitFahrenheit = @"F";
     [root addArrangedSubview:[self makeSettingsRowWithLeft:[self makeMetricViewWithCheckbox:temperature
                                                                                   unitPopup:temperatureUnitPopup]
                                                      right:[self makeMetricViewWithCheckbox:disk unitPopup:nil]]];
+    [root addArrangedSubview:[self makeRefreshSettingsViewWithPopup:cpuRAMRefreshPopup]];
     [root addArrangedSubview:[self makeActionsViewWithLogin:login]];
     [contentView addSubview:root];
 
@@ -194,6 +186,7 @@ static NSString * const MPTemperatureUnitFahrenheit = @"F";
         [root.leadingAnchor constraintEqualToAnchor:contentView.leadingAnchor constant:18],
         [root.trailingAnchor constraintEqualToAnchor:contentView.trailingAnchor constant:-18],
         [root.topAnchor constraintEqualToAnchor:contentView.topAnchor constant:18],
+        [root.bottomAnchor constraintLessThanOrEqualToAnchor:contentView.bottomAnchor constant:-18],
     ]];
 
     return window;
@@ -221,6 +214,29 @@ static NSString * const MPTemperatureUnitFahrenheit = @"F";
     return stack;
 }
 
+- (NSStackView *)makeRefreshSettingsViewWithPopup:(NSPopUpButton *)popup {
+    NSStackView *stack = [[NSStackView alloc] init];
+    stack.orientation = NSUserInterfaceLayoutOrientationVertical;
+    stack.alignment = NSLayoutAttributeLeading;
+    stack.spacing = 6;
+    stack.translatesAutoresizingMaskIntoConstraints = NO;
+    [stack.widthAnchor constraintEqualToConstant:320].active = YES;
+
+    NSTextField *label = [NSTextField labelWithString:@"CPU & RAM refresh"];
+    label.font = [NSFont systemFontOfSize:11 weight:NSFontWeightSemibold];
+
+    NSTextField *help = [NSTextField wrappingLabelWithString:
+        @"Temperature and disk update less often to save energy."];
+    help.font = [NSFont systemFontOfSize:11];
+    help.textColor = NSColor.secondaryLabelColor;
+    help.maximumNumberOfLines = 2;
+
+    [stack addArrangedSubview:label];
+    [stack addArrangedSubview:popup];
+    [stack addArrangedSubview:help];
+    return stack;
+}
+
 - (NSStackView *)makeActionsViewWithLogin:(NSButton *)login {
     NSStackView *stack = [[NSStackView alloc] init];
     stack.orientation = NSUserInterfaceLayoutOrientationVertical;
@@ -234,16 +250,13 @@ static NSString * const MPTemperatureUnitFahrenheit = @"F";
     buttonRow.alignment = NSLayoutAttributeCenterY;
     buttonRow.spacing = 8;
 
-    NSButton *resetButton = [NSButton buttonWithTitle:@"Reset Defaults" target:self action:@selector(resetDefaults)];
-    NSButton *closeButton = [NSButton buttonWithTitle:@"Close" target:self action:@selector(closeSettings)];
+    NSButton *resetButton = [NSButton buttonWithTitle:@"Reset Metrics" target:self action:@selector(resetMetrics)];
     NSButton *quitButton = [NSButton buttonWithTitle:@"Quit" target:self action:@selector(quit)];
     resetButton.bezelStyle = NSBezelStyleRounded;
-    closeButton.bezelStyle = NSBezelStyleRounded;
     quitButton.bezelStyle = NSBezelStyleRounded;
 
     [stack addArrangedSubview:login];
     [buttonRow addArrangedSubview:resetButton];
-    [buttonRow addArrangedSubview:closeButton];
     [buttonRow addArrangedSubview:quitButton];
     [stack addArrangedSubview:buttonRow];
     return stack;
@@ -273,43 +286,80 @@ static NSString * const MPTemperatureUnitFahrenheit = @"F";
     return popup;
 }
 
+- (NSPopUpButton *)makeCPURAMRefreshPopup {
+    NSPopUpButton *popup = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
+    popup.target = self;
+    popup.action = @selector(cpuRAMRefreshIntervalChanged);
+    [popup.widthAnchor constraintEqualToConstant:168].active = YES;
+
+    NSArray<NSNumber *> *intervals = @[
+        @(MPCPURAMRefreshIntervalFast),
+        @(MPCPURAMRefreshIntervalDefault),
+        @(MPCPURAMRefreshIntervalSlow),
+    ];
+    for (NSNumber *interval in intervals) {
+        NSString *unit = interval.integerValue == 1 ? @"second" : @"seconds";
+        [popup addItemWithTitle:[NSString stringWithFormat:@"Every %ld %@",
+                                  (long)interval.integerValue,
+                                  unit]];
+        popup.lastItem.representedObject = interval;
+    }
+
+    [popup setAccessibilityLabel:@"CPU and RAM refresh interval"];
+    [popup setAccessibilityHelp:@"Temperature and disk use slower fixed intervals."];
+    return popup;
+}
+
 - (void)syncSettingsControls {
     self.cpuCheckbox.state = self.showCPU ? NSControlStateValueOn : NSControlStateValueOff;
     self.temperatureCheckbox.state = self.showTemperature ? NSControlStateValueOn : NSControlStateValueOff;
     self.ramCheckbox.state = self.showRAM ? NSControlStateValueOn : NSControlStateValueOff;
     self.diskCheckbox.state = self.showDisk ? NSControlStateValueOn : NSControlStateValueOff;
     self.loginCheckbox.state = self.cachedLoginEnabled ? NSControlStateValueOn : NSControlStateValueOff;
+    [self selectCPURAMRefreshInterval:self.cpuRAMRefreshIntervalSeconds
+                              inPopup:self.cpuRAMRefreshPopup];
     [self selectTemperatureUnit:self.temperatureUnit inPopup:self.temperatureUnitPopup];
     [self updateSettingsControlState];
 }
 
 - (void)settingsChanged {
-    BOOL didEnableCPU = !self.showCPU && self.cpuCheckbox.state == NSControlStateValueOn;
+    BOOL wasShowingCPU = self.showCPU;
+    BOOL wasShowingRAM = self.showRAM;
+    BOOL wasShowingTemperature = self.showTemperature;
     self.showCPU = self.cpuCheckbox.state == NSControlStateValueOn;
     self.showTemperature = self.temperatureCheckbox.state == NSControlStateValueOn;
     self.showRAM = self.ramCheckbox.state == NSControlStateValueOn;
     self.showDisk = self.diskCheckbox.state == NSControlStateValueOn;
-    if (didEnableCPU) {
+
+    if (wasShowingCPU != self.showCPU) {
         [self.cpuMonitor reset];
         self.cachedCPU = nil;
-        self.lastCPURead = [NSDate distantPast];
+    }
+    if (wasShowingRAM && !self.showRAM) {
+        self.cachedRAM = nil;
+    }
+    if (wasShowingTemperature && !self.showTemperature) {
+        [self releaseTemperatureReaderIfDisabled];
     }
     if (!self.showDisk) {
         self.cachedDisk = nil;
         self.cachedDiskAvailableBytes = nil;
-        self.lastDiskRead = [NSDate distantPast];
     }
-    [self releaseTemperatureReaderIfDisabled];
+
     [self updateSettingsControlState];
-    [self refreshWithForce:YES];
-    if (didEnableCPU) {
-        [self prepareCPUWarmUp];
-    }
-    [self scheduleNextRefresh];
+    self.refreshScheduler.activeMetrics = [self activeRefreshMetrics];
+    [self updateStatusImage];
 }
 
 - (void)temperatureUnitChanged {
     self.temperatureUnit = [self selectedTemperatureUnitFromPopup:self.temperatureUnitPopup];
+    [self updateStatusImage];
+}
+
+- (void)cpuRAMRefreshIntervalChanged {
+    NSNumber *selectedInterval = self.cpuRAMRefreshPopup.selectedItem.representedObject;
+    self.cpuRAMRefreshIntervalSeconds = selectedInterval.doubleValue;
+    self.refreshScheduler.cpuRAMRefreshIntervalSeconds = self.cpuRAMRefreshIntervalSeconds;
     [self updateStatusImage];
 }
 
@@ -338,71 +388,70 @@ static NSString * const MPTemperatureUnitFahrenheit = @"F";
     [self updateStatusImage];
 }
 
-- (void)closeSettings {
-    [self.settingsWindow close];
-}
-
-- (void)resetDefaults {
-    BOOL didEnableCPU = !self.showCPU;
-    self.showCPU = YES;
-    self.showRAM = YES;
-    self.showTemperature = NO;
-    self.showDisk = NO;
-    self.temperatureUnit = MPTemperatureUnitCelsius;
-    if (didEnableCPU) {
-        [self.cpuMonitor reset];
-        self.cachedCPU = nil;
-        self.lastCPURead = [NSDate distantPast];
-    }
+- (void)resetMetrics {
+    [self.refreshScheduler stop];
+    [self.settingsStore resetMetricSettings];
+    [self.cpuMonitor reset];
+    self.cachedCPU = nil;
+    self.cachedRAM = nil;
+    self.cachedDisk = nil;
+    self.cachedDiskAvailableBytes = nil;
     [self releaseTemperatureReaderIfDisabled];
     [self syncSettingsControls];
-    [self refreshWithForce:YES];
-    if (didEnableCPU) {
-        [self prepareCPUWarmUp];
-    }
-    [self scheduleNextRefresh];
+    self.refreshScheduler.cpuRAMRefreshIntervalSeconds = self.cpuRAMRefreshIntervalSeconds;
+    self.refreshScheduler.activeMetrics = [self activeRefreshMetrics];
+    [self.refreshScheduler invalidateLastSampleForMetrics:(MPRefreshMetricCPU | MPRefreshMetricRAM)];
+    [self.refreshScheduler start];
+    [self updateStatusImage];
 }
 
 - (void)quit {
+    [self.refreshScheduler stop];
     [NSApp terminate:nil];
 }
 
-- (void)refreshWithForce:(BOOL)force {
-    NSDate *now = [NSDate date];
+- (MPRefreshMetric)activeRefreshMetrics {
+    MPRefreshMetric metrics = MPRefreshMetricNone;
+    if (self.showCPU) {
+        metrics |= MPRefreshMetricCPU;
+    }
+    if (self.showRAM) {
+        metrics |= MPRefreshMetricRAM;
+    }
+    if (self.showTemperature) {
+        metrics |= MPRefreshMetricTemperature;
+    }
+    if (self.showDisk) {
+        metrics |= MPRefreshMetricDisk;
+    }
+    return metrics;
+}
 
-    if (self.showCPU && (force || [now timeIntervalSinceDate:self.lastCPURead] >= MPDefaultCPURefreshInterval)) {
+- (void)refreshMetrics:(MPRefreshMetric)metrics {
+    if ((metrics & MPRefreshMetricCPU) != 0 && self.showCPU) {
+        BOOL hadCPUBaseline = self.cpuMonitor.hasBaseline;
         self.cachedCPU = [self.cpuMonitor usagePercent];
-        self.lastCPURead = now;
+        if (!self.cachedCPU && !hadCPUBaseline && self.cpuMonitor.hasBaseline) {
+            [self.refreshScheduler prepareCPUWarmUp];
+        }
     }
 
-    if (self.showRAM && (force || [now timeIntervalSinceDate:self.lastRAMRead] >= MPDefaultRAMRefreshInterval)) {
+    if ((metrics & MPRefreshMetricRAM) != 0 && self.showRAM) {
         self.cachedRAM = [MPMemoryMonitor usagePercent];
-        self.lastRAMRead = now;
     }
 
-    if (self.showTemperature &&
-        (force || [now timeIntervalSinceDate:self.lastTemperatureRead] >= MPDefaultTemperatureRefreshInterval)) {
-        [self requestTemperatureReadStartedAt:now];
+    if ((metrics & MPRefreshMetricTemperature) != 0 && self.showTemperature) {
+        [self requestTemperatureRead];
     }
 
-    if (self.showDisk && (force || [now timeIntervalSinceDate:self.lastDiskRead] >= MPDefaultDiskRefreshInterval)) {
+    if ((metrics & MPRefreshMetricDisk) != 0 && self.showDisk) {
         uint64_t availableBytes = 0;
         self.cachedDisk = [MPDiskMonitor usagePercentForPath:NSHomeDirectory()
                                              availableBytes:&availableBytes];
         self.cachedDiskAvailableBytes = self.cachedDisk ? @(availableBytes) : nil;
-        self.lastDiskRead = now;
     }
 
     [self updateStatusImage];
-}
-
-- (void)prepareCPUWarmUp {
-    if (!self.showCPU || self.cachedCPU) {
-        return;
-    }
-
-    NSTimeInterval offset = -MAX(0.0, MPDefaultCPURefreshInterval - MPStartupWarmUpDelay);
-    self.lastCPURead = [[NSDate date] dateByAddingTimeInterval:offset];
 }
 
 - (MPTemperatureReader *)activeTemperatureReader {
@@ -420,19 +469,18 @@ static NSString * const MPTemperatureUnitFahrenheit = @"F";
         return;
     }
 
+    self.temperatureRequestGeneration += 1;
     self.temperatureReadInFlight = NO;
     self.cachedTemperature = nil;
-    self.lastTemperatureRead = [NSDate distantPast];
-    self.temperatureReader = nil;
 }
 
-- (void)requestTemperatureReadStartedAt:(NSDate *)date {
+- (void)requestTemperatureRead {
     if (self.temperatureReadInFlight) {
         return;
     }
 
     self.temperatureReadInFlight = YES;
-    self.lastTemperatureRead = date;
+    NSUInteger generation = ++self.temperatureRequestGeneration;
 
     __weak typeof(self) weakSelf = self;
     [[self activeTemperatureReader] temperatureCelsiusAsync:^(NSNumber *temperatureCelsius) {
@@ -441,72 +489,20 @@ static NSString * const MPTemperatureUnitFahrenheit = @"F";
             return;
         }
 
+        if (generation != strongSelf.temperatureRequestGeneration) {
+            return;
+        }
+
         strongSelf.temperatureReadInFlight = NO;
         if (!strongSelf.showTemperature) {
             strongSelf.cachedTemperature = nil;
             [strongSelf updateStatusImage];
-            [strongSelf scheduleNextRefresh];
             return;
         }
 
         strongSelf.cachedTemperature = temperatureCelsius;
         [strongSelf updateStatusImage];
-        [strongSelf scheduleNextRefresh];
     }];
-}
-
-- (void)scheduleNextRefresh {
-    [self.timer invalidate];
-    self.timer = nil;
-
-    NSNumber *delayNumber = [self nextRefreshDelay];
-    if (!delayNumber) {
-        return;
-    }
-
-    NSTimeInterval delay = delayNumber.doubleValue;
-    NSTimer *nextTimer = [NSTimer scheduledTimerWithTimeInterval:delay
-                                                          target:self
-                                                        selector:@selector(timerFired:)
-                                                        userInfo:nil
-                                                         repeats:NO];
-    nextTimer.tolerance = MIN(MAX(delay * 0.1, 0.5), 5.0);
-    self.timer = nextTimer;
-}
-
-- (void)timerFired:(NSTimer *)timer {
-    [self refreshWithForce:NO];
-    [self scheduleNextRefresh];
-}
-
-- (NSNumber *)nextRefreshDelay {
-    NSDate *now = [NSDate date];
-    NSMutableArray<NSNumber *> *delays = [NSMutableArray array];
-
-    if (self.showCPU) {
-        [delays addObject:@(MAX(1.0, MPDefaultCPURefreshInterval - [now timeIntervalSinceDate:self.lastCPURead]))];
-    }
-
-    if (self.showRAM) {
-        [delays addObject:@(MAX(1.0, MPDefaultRAMRefreshInterval - [now timeIntervalSinceDate:self.lastRAMRead]))];
-    }
-
-    if (self.showTemperature && !self.temperatureReadInFlight) {
-        [delays addObject:@(MAX(1.0, MPDefaultTemperatureRefreshInterval - [now timeIntervalSinceDate:self.lastTemperatureRead]))];
-    }
-
-    if (self.showDisk) {
-        [delays addObject:@(MAX(1.0, MPDefaultDiskRefreshInterval - [now timeIntervalSinceDate:self.lastDiskRead]))];
-    }
-
-    NSNumber *minimum = nil;
-    for (NSNumber *delay in delays) {
-        if (!minimum || delay.doubleValue < minimum.doubleValue) {
-            minimum = delay;
-        }
-    }
-
-    return minimum;
 }
 
 - (void)updateStatusImage {
@@ -539,7 +535,7 @@ static NSString * const MPTemperatureUnitFahrenheit = @"F";
     NSArray<NSString *> *rightColumn = [self compactValues:@[temperature ?: NSNull.null, disk ?: NSNull.null]];
 
     if (leftColumn.count == 0 && rightColumn.count == 0) {
-        return @[@"menu:", @"pulse"];
+        return @[@"PULSE"];
     }
 
     if (rightColumn.count == 0) {
@@ -578,7 +574,9 @@ static NSString * const MPTemperatureUnitFahrenheit = @"F";
 
     NSUInteger count = MIN((NSUInteger)2, rows.count);
     for (NSUInteger index = 0; index < count; index += 1) {
-        CGFloat y = index == 0 ? 10.5 : -0.5;
+        CGFloat y = count == 1 ?
+            floor((image.size.height - [rows[index] sizeWithAttributes:attributes].height) / 2.0) :
+            (index == 0 ? 10.5 : -0.5);
         [rows[index] drawAtPoint:NSMakePoint(0, y) withAttributes:attributes];
     }
 
@@ -589,6 +587,19 @@ static NSString * const MPTemperatureUnitFahrenheit = @"F";
 
 - (CGFloat)textWidth:(NSString *)value attributes:(NSDictionary<NSAttributedStringKey, id> *)attributes {
     return [value sizeWithAttributes:attributes].width;
+}
+
+- (void)selectCPURAMRefreshInterval:(NSTimeInterval)interval
+                            inPopup:(NSPopUpButton *)popup {
+    for (NSMenuItem *item in popup.itemArray) {
+        NSNumber *value = item.representedObject;
+        if ([value isKindOfClass:[NSNumber class]] && fabs(value.doubleValue - interval) < 0.001) {
+            [popup selectItem:item];
+            return;
+        }
+    }
+
+    [popup selectItemAtIndex:1];
 }
 
 - (void)selectTemperatureUnit:(NSString *)unit inPopup:(NSPopUpButton *)popup {
@@ -624,13 +635,13 @@ static NSString * const MPTemperatureUnitFahrenheit = @"F";
     if (self.showCPU) {
         [lines addObject:[NSString stringWithFormat:@"CPU: %@ (every %@)",
                           [self formatPercent:self.cachedCPU],
-                          [self formatInterval:MPDefaultCPURefreshInterval]]];
+                          [self formatInterval:self.cpuRAMRefreshIntervalSeconds]]];
     }
 
     if (self.showRAM) {
         [lines addObject:[NSString stringWithFormat:@"RAM: %@ (every %@)",
                           [self formatPercent:self.cachedRAM],
-                          [self formatInterval:MPDefaultRAMRefreshInterval]]];
+                          [self formatInterval:self.cpuRAMRefreshIntervalSeconds]]];
     }
 
     if (self.showTemperature) {
@@ -639,14 +650,14 @@ static NSString * const MPTemperatureUnitFahrenheit = @"F";
             [self formatTemperature:self.cachedTemperature];
         [lines addObject:[NSString stringWithFormat:@"TEMP (hottest sensor): %@ (every %@)",
                           temperature,
-                          [self formatInterval:MPDefaultTemperatureRefreshInterval]]];
+                          [self formatInterval:MPTemperatureRefreshInterval]]];
     }
 
     if (self.showDisk) {
         [lines addObject:[NSString stringWithFormat:@"Disk: %@, %@ (every %@)",
                           [self formatPercent:self.cachedDisk],
                           [self formatAvailableBytes:self.cachedDiskAvailableBytes],
-                          [self formatInterval:MPDefaultDiskRefreshInterval]]];
+                          [self formatInterval:MPDiskRefreshInterval]]];
     }
 
     if (!self.showCPU && !self.showRAM && !self.showTemperature && !self.showDisk) {
@@ -709,7 +720,7 @@ static NSString * const MPTemperatureUnitFahrenheit = @"F";
 
 - (NSArray<NSString *> *)twoRowsFromValues:(NSArray<NSString *> *)values {
     if (values.count == 1) {
-        return @[values[0], @""];
+        return @[values[0]];
     }
 
     return [values subarrayWithRange:NSMakeRange(0, MIN((NSUInteger)2, values.count))];

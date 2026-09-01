@@ -3,6 +3,8 @@
 #import <Foundation/Foundation.h>
 #import <mach/mach.h>
 
+extern uint64_t MPUnsignedTickDelta(uint32_t current, uint32_t previous);
+
 static NSUInteger MPFailureCount = 0;
 
 static void MPAssert(BOOL condition, NSString *message) {
@@ -45,10 +47,22 @@ static void MPTestHostPortReferences(void) {
 
 static void MPTestCPUMonitorReset(void) {
     MPCPUMonitor *monitor = [[MPCPUMonitor alloc] init];
+    MPAssert(!monitor.hasBaseline, @"a new CPU monitor should not have a baseline");
     MPAssert([monitor usagePercent] == nil, @"first CPU sample should establish a baseline");
+    MPAssert(monitor.hasBaseline, @"a successful first CPU sample should establish a baseline");
     [monitor usagePercent];
     [monitor reset];
+    MPAssert(!monitor.hasBaseline, @"reset should clear the CPU baseline");
     MPAssert([monitor usagePercent] == nil, @"first CPU sample after reset should establish a new baseline");
+}
+
+static void MPTestCPUTickDelta(void) {
+    MPAssert(MPUnsignedTickDelta(125, 100) == 25,
+             @"CPU tick delta should handle counters that have not wrapped");
+    MPAssert(MPUnsignedTickDelta(3, UINT32_MAX - 1) == 5,
+             @"CPU tick delta should preserve elapsed ticks across a 32-bit wrap");
+    MPAssert(MPUnsignedTickDelta(0, UINT32_MAX) == 1,
+             @"CPU tick delta should handle the UINT32_MAX to zero boundary");
 }
 
 static void MPTestMemoryRange(void) {
@@ -72,6 +86,7 @@ int main(void) {
     @autoreleasepool {
         MPTestHostPortReferences();
         MPTestCPUMonitorReset();
+        MPTestCPUTickDelta();
         MPTestMemoryRange();
         MPTestDiskSnapshot();
 

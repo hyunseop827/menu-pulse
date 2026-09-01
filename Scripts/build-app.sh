@@ -2,12 +2,17 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-BUILD_DIR="$ROOT_DIR/build/release"
+BUILD_DIR="${MENU_PULSE_BUILD_DIR:-$ROOT_DIR/build/release}"
 APP_PATH="$BUILD_DIR/Menu Pulse.app"
 BIN_PATH="$APP_PATH/Contents/MacOS/MenuPulse"
 ARCH="${ARCH:-arm64}"
 SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
 SRC_FILES=("$ROOT_DIR"/Sources/MenuPulse/*.m)
+
+if [[ "$ARCH" != "arm64" ]]; then
+  echo "build-app: Menu Pulse supports the arm64 architecture only" >&2
+  exit 1
+fi
 
 rm -rf "$APP_PATH"
 mkdir -p "$APP_PATH/Contents/MacOS"

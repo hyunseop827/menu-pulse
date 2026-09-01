@@ -3,6 +3,7 @@
 NS_ASSUME_NONNULL_BEGIN
 
 @interface MPCPUMonitor : NSObject
+@property(nonatomic, readonly) BOOL hasBaseline;
 - (nullable NSNumber *)usagePercent;
 - (void)reset;
 @end

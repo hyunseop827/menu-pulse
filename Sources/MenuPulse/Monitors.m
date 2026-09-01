@@ -10,8 +10,10 @@ typedef struct {
     uint32_t nice;
 } MPTicks;
 
-static uint64_t MPDiffTicks(uint32_t current, uint32_t previous) {
-    return current >= previous ? (uint64_t)(current - previous) : 0;
+uint64_t MPUnsignedTickDelta(uint32_t current, uint32_t previous) {
+    // host_cpu_load_info exposes 32-bit counters. Unsigned subtraction keeps
+    // the elapsed ticks correct when a counter wraps through UINT32_MAX.
+    return (uint64_t)(uint32_t)(current - previous);
 }
 
 @interface MPCPUMonitor ()
@@ -20,6 +22,10 @@ static uint64_t MPDiffTicks(uint32_t current, uint32_t previous) {
 @end
 
 @implementation MPCPUMonitor
+
+- (BOOL)hasBaseline {
+    return self.hasPreviousTicks;
+}
 
 - (NSNumber *)usagePercent {
     host_cpu_load_info_data_t info;
@@ -54,10 +60,10 @@ static uint64_t MPDiffTicks(uint32_t current, uint32_t previous) {
         return nil;
     }
 
-    uint64_t user = MPDiffTicks(ticks.user, self.previousTicks.user);
-    uint64_t system = MPDiffTicks(ticks.system, self.previousTicks.system);
-    uint64_t idle = MPDiffTicks(ticks.idle, self.previousTicks.idle);
-    uint64_t nice = MPDiffTicks(ticks.nice, self.previousTicks.nice);
+    uint64_t user = MPUnsignedTickDelta(ticks.user, self.previousTicks.user);
+    uint64_t system = MPUnsignedTickDelta(ticks.system, self.previousTicks.system);
+    uint64_t idle = MPUnsignedTickDelta(ticks.idle, self.previousTicks.idle);
+    uint64_t nice = MPUnsignedTickDelta(ticks.nice, self.previousTicks.nice);
     uint64_t totalTicks = user + system + idle + nice;
     uint64_t activeTicks = totalTicks - idle;
     self.previousTicks = ticks;

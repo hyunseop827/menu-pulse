@@ -16,18 +16,30 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Check tag commit matches origin/main
+        run: |
+          git fetch --no-tags origin "+refs/heads/main:refs/remotes/origin/main"
+          TAG_SHA="$(git rev-parse 'HEAD^{commit}')"
+          MAIN_SHA="$(git rev-parse 'refs/remotes/origin/main^{commit}')"
+          test "$TAG_SHA" = "$MAIN_SHA"
+
       - name: Check shell scripts
         run: bash -n Scripts/*.sh
 
-      - name: Check tag matches Info.plist version
+      - name: Check tag matches app metadata
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#v}"
-          PLIST_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Packaging/Info.plist)"
-          test "$TAG_VERSION" = "$PLIST_VERSION"
+          SHORT_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Packaging/Info.plist)"
+          BUNDLE_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' Packaging/Info.plist)"
+          BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' Packaging/Info.plist)"
+          test "$TAG_VERSION" = "$SHORT_VERSION"
+          test "$TAG_VERSION" = "$BUNDLE_VERSION"
+          test "$BUNDLE_ID" = "dev.hyunseop.MenuPulse"
 
       - name: Build DMG
         run: |
           chmod +x Scripts/*.sh
+          Scripts/analyze.sh
           Scripts/test.sh
           Scripts/build-dmg.sh
 
@@ -35,6 +47,7 @@ jobs:
         run: |
           codesign --verify --strict "build/release/Menu Pulse.app"
           hdiutil verify dist/MenuPulse.dmg
+          test "$(lipo -archs 'build/release/Menu Pulse.app/Contents/MacOS/MenuPulse')" = arm64
           file "build/release/Menu Pulse.app/Contents/MacOS/MenuPulse"
           otool -L "build/release/Menu Pulse.app/Contents/MacOS/MenuPulse"
           ! otool -L "build/release/Menu Pulse.app/Contents/MacOS/MenuPulse" | grep -q '/usr/lib/swift'
@@ -48,8 +61,30 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            dist/MenuPulse.dmg \
-            SHA256SUMS.txt \
+          RELEASE_NOTES="Apple Silicon arm64 build. Ad-hoc signed, not notarized; macOS Gatekeeper may show a warning on first launch."
+          if RELEASE_IS_DRAFT="$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq '.isDraft' 2>/dev/null)"; then
+            :
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --draft \
+              --verify-tag \
+              --title "$GITHUB_REF_NAME" \
+              --notes "$RELEASE_NOTES"
+            RELEASE_IS_DRAFT=true
+          fi
+          if [[ "$RELEASE_IS_DRAFT" == "true" ]]; then
+            gh release upload "$GITHUB_REF_NAME" \
+              dist/MenuPulse.dmg \
+              SHA256SUMS.txt \
+              --clobber
+          fi
+          gh release edit "$GITHUB_REF_NAME" \
+            --draft=false \
+            --prerelease=false \
             --title "$GITHUB_REF_NAME" \
-            --notes "Apple Silicon arm64 build. Ad-hoc signed, not notarized; macOS Gatekeeper may show a warning on first launch."
+            --notes "$RELEASE_NOTES"
+
+      - name: Re-download and verify published assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: Scripts/verify-release.sh "$GITHUB_REF_NAME"

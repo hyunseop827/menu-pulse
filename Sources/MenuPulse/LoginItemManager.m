@@ -5,11 +5,19 @@
 
 static NSString * const MPLegacyLoginItemLabel = @"dev.hyunseop.MenuPulse";
 
+@interface MPLoginItemManager ()
+- (BOOL)waitForModernLoginItemToBecomeUnregistered;
+@end
+
 @implementation MPLoginItemManager
 
 - (instancetype)init {
+    return [self initWithLegacyMigrationEnabled:YES];
+}
+
+- (instancetype)initWithLegacyMigrationEnabled:(BOOL)legacyMigrationEnabled {
     self = [super init];
-    if (self) {
+    if (self && legacyMigrationEnabled) {
         [self migrateLegacyLoginItemIfPossible];
     }
     return self;
@@ -24,9 +32,8 @@ static NSString * const MPLegacyLoginItemLabel = @"dev.hyunseop.MenuPulse";
 }
 
 - (BOOL)setEnabled:(BOOL)enabled {
-    SMAppService *service = SMAppService.mainAppService;
-
     if (enabled) {
+        SMAppService *service = SMAppService.mainAppService;
         if (service.status == SMAppServiceStatusEnabled) {
             [self removeLegacyLoginItem];
             return YES;
@@ -44,17 +51,38 @@ static NSString * const MPLegacyLoginItemLabel = @"dev.hyunseop.MenuPulse";
         return didEnable;
     }
 
+    if (![self unregisterModernLoginItem]) {
+        return NO;
+    }
+    return [self removeLegacyLoginItem];
+}
+
+- (BOOL)unregisterModernLoginItem {
+    SMAppService *service = SMAppService.mainAppService;
     if (service.status == SMAppServiceStatusNotRegistered) {
-        return [self removeLegacyLoginItem];
+        return YES;
     }
 
     NSError *error = nil;
     if (![service unregisterAndReturnError:&error]) {
         return NO;
     }
+    return [self waitForModernLoginItemToBecomeUnregistered];
+}
 
-    BOOL didDisable = service.status != SMAppServiceStatusEnabled;
-    return didDisable && [self removeLegacyLoginItem];
+- (BOOL)waitForModernLoginItemToBecomeUnregistered {
+    static const NSUInteger maximumAttempts = 10;
+    static const useconds_t delayMicroseconds = 50000;
+
+    for (NSUInteger attempt = 0; attempt < maximumAttempts; attempt += 1) {
+        if (SMAppService.mainAppService.status == SMAppServiceStatusNotRegistered) {
+            return YES;
+        }
+        if (attempt + 1 < maximumAttempts) {
+            usleep(delayMicroseconds);
+        }
+    }
+    return NO;
 }
 
 - (void)openSystemSettings {
