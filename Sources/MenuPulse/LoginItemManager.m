@@ -10,12 +10,9 @@ static NSString * const MPLegacyLoginItemLabel = @"dev.hyunseop.MenuPulse";
 - (BOOL)performSetEnabled:(BOOL)enabled;
 - (BOOL)performUnregisterModernLoginItem;
 - (BOOL)waitForModernLoginItemToBecomeUnregistered;
-- (BOOL)isOnOperationQueue;
 @end
 
 @implementation MPLoginItemManager
-
-static const void *MPLoginItemOperationQueueKey = &MPLoginItemOperationQueueKey;
 
 - (instancetype)init {
     return [self initWithLegacyMigrationEnabled:YES];
@@ -27,12 +24,6 @@ static const void *MPLoginItemOperationQueueKey = &MPLoginItemOperationQueueKey;
         _operationQueue = dispatch_queue_create(
             "MenuPulse.login-item-manager",
             DISPATCH_QUEUE_SERIAL
-        );
-        dispatch_queue_set_specific(
-            _operationQueue,
-            MPLoginItemOperationQueueKey,
-            (__bridge void *)self,
-            NULL
         );
         if (legacyMigrationEnabled) {
             [self migrateLegacyLoginItemIfPossible];
@@ -47,19 +38,6 @@ static const void *MPLoginItemOperationQueueKey = &MPLoginItemOperationQueueKey;
 
 - (BOOL)requiresApproval {
     return SMAppService.mainAppService.status == SMAppServiceStatusRequiresApproval;
-}
-
-- (BOOL)setEnabled:(BOOL)enabled {
-    __block BOOL success = NO;
-    void (^operation)(void) = ^{
-        success = [self performSetEnabled:enabled];
-    };
-    if ([self isOnOperationQueue]) {
-        operation();
-    } else {
-        dispatch_sync(self.operationQueue, operation);
-    }
-    return success;
 }
 
 - (void)setEnabled:(BOOL)enabled completion:(MPLoginItemUpdateCompletion)completion {
@@ -98,19 +76,6 @@ static const void *MPLoginItemOperationQueueKey = &MPLoginItemOperationQueueKey;
     return [self removeLegacyLoginItem];
 }
 
-- (BOOL)unregisterModernLoginItem {
-    __block BOOL success = NO;
-    void (^operation)(void) = ^{
-        success = [self performUnregisterModernLoginItem];
-    };
-    if ([self isOnOperationQueue]) {
-        operation();
-    } else {
-        dispatch_sync(self.operationQueue, operation);
-    }
-    return success;
-}
-
 - (BOOL)performUnregisterModernLoginItem {
     SMAppService *service = SMAppService.mainAppService;
     if (service.status == SMAppServiceStatusNotRegistered) {
@@ -137,10 +102,6 @@ static const void *MPLoginItemOperationQueueKey = &MPLoginItemOperationQueueKey;
         }
     }
     return NO;
-}
-
-- (BOOL)isOnOperationQueue {
-    return dispatch_get_specific(MPLoginItemOperationQueueKey) == (__bridge void *)self;
 }
 
 - (void)openSystemSettings {

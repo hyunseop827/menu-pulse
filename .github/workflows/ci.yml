@@ -17,23 +17,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Check shell scripts
-        run: bash -n Scripts/*.sh
+      - name: Check, build, and test
+        run: make check
 
-      - name: Check app metadata
-        run: plutil -lint Packaging/Info.plist
-
-      - name: Build and test
-        run: |
-          chmod +x Scripts/*.sh
-          Scripts/analyze.sh
-          Scripts/test.sh
-          Scripts/build-app.sh
-
-      - name: Verify app
-        run: |
-          codesign --verify --strict "build/release/Menu Pulse.app"
-          test "$(lipo -archs 'build/release/Menu Pulse.app/Contents/MacOS/MenuPulse')" = arm64
-          file "build/release/Menu Pulse.app/Contents/MacOS/MenuPulse"
-          otool -L "build/release/Menu Pulse.app/Contents/MacOS/MenuPulse"
-          ! otool -L "build/release/Menu Pulse.app/Contents/MacOS/MenuPulse" | grep -q '/usr/lib/swift'
+  release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: validate
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release.yml

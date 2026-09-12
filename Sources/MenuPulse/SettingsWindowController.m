@@ -20,7 +20,7 @@
 - (instancetype)initWithSettingsStore:(MPSettingsStore *)settingsStore
                               delegate:(id<MPSettingsWindowControllerDelegate>)delegate {
     NSWindow *window = [[NSWindow alloc]
-        initWithContentRect:NSMakeRect(0, 0, 390, 420)
+        initWithContentRect:NSMakeRect(0, 0, 390, 455)
                   styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable)
                     backing:NSBackingStoreBuffered
                       defer:NO];
@@ -30,6 +30,9 @@
         _delegate = delegate;
         _alertRunner = ^NSModalResponse(NSAlert *alert) {
             return [alert runModal];
+        };
+        _urlOpener = ^BOOL(NSURL *url) {
+            return [NSWorkspace.sharedWorkspace openURL:url];
         };
         [self configureWindow];
     }
@@ -123,6 +126,7 @@
     help.maximumNumberOfLines = 2;
     [root addArrangedSubview:help];
     [root addArrangedSubview:[self makeActionsView]];
+    [root addArrangedSubview:[self makeVersionView]];
 
     [contentView addSubview:root];
     [NSLayoutConstraint activateConstraints:@[
@@ -213,6 +217,33 @@
     [buttonRow addArrangedSubview:quitButton];
     [stack addArrangedSubview:buttonRow];
     return stack;
+}
+
+- (NSStackView *)makeVersionView {
+    NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
+    if (version.length == 0) {
+        version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleVersion"];
+    }
+    NSTextField *versionLabel = [NSTextField labelWithString:version.length > 0
+        ? [NSString stringWithFormat:@"Version %@", version] : @"Development build"];
+    versionLabel.font = [NSFont systemFontOfSize:11];
+    versionLabel.textColor = NSColor.secondaryLabelColor;
+
+    NSButton *releaseButton = [NSButton buttonWithTitle:@"View Latest Release"
+                                                target:self
+                                                action:@selector(openLatestRelease:)];
+    releaseButton.bordered = NO;
+    releaseButton.font = [NSFont systemFontOfSize:11];
+    releaseButton.contentTintColor = NSColor.linkColor;
+    releaseButton.toolTip = @"Open the latest Menu Pulse release on GitHub.";
+
+    NSStackView *row = [NSStackView stackViewWithViews:@[versionLabel, releaseButton]];
+    row.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+    row.alignment = NSLayoutAttributeCenterY;
+    row.distribution = NSStackViewDistributionEqualSpacing;
+    row.translatesAutoresizingMaskIntoConstraints = NO;
+    [row.widthAnchor constraintEqualToConstant:354].active = YES;
+    return row;
 }
 
 - (NSPopUpButton *)makeTemperatureUnitPopup {
@@ -341,10 +372,18 @@
     [self closeSettingsWindow];
 }
 
+- (void)openLatestRelease:(id)sender {
+    (void)sender;
+    NSURL *url = [NSURL URLWithString:@"https://github.com/hyunseop827/menu-pulse/releases/latest"];
+    if (url) {
+        self.urlOpener(url);
+    }
+}
+
 - (void)quitPressed:(id)sender {
     (void)sender;
     NSAlert *alert = [self alertWithMessage:@"Quit Menu Pulse?"
-                               informative:@"Menu bar monitoring will stop.\nOpen at login will remain enabled."
+                               informative:@"Menu bar monitoring will stop.\nYour Open at login setting will stay unchanged."
                                      action:@"Quit"
                                      cancel:@"Cancel"];
     if (self.alertRunner(alert) == NSAlertFirstButtonReturn) {
@@ -355,7 +394,7 @@
 - (void)resetDefaultsPressed:(id)sender {
     (void)sender;
     NSAlert *alert = [self alertWithMessage:@"Reset all settings?"
-                               informative:@"CPU/RAM: On, every 3 seconds\nTemperature: Off, every 30 seconds\nDisk: Off, every 5 minutes\nTemperature unit: Celsius\nOpen at login: On"
+                               informative:@"CPU/RAM: On, every 3 seconds\nTemperature: Off, every 30 seconds\nDisk: Off, every 5 minutes\nTemperature unit: Celsius\n\nOpen at login will also be turned on. macOS may require approval in System Settings."
                                      action:@"Reset"
                                      cancel:@"Cancel"];
     if (self.alertRunner(alert) == NSAlertFirstButtonReturn) {

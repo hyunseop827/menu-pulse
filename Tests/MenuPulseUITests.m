@@ -1,6 +1,7 @@
 #import "LoginItemManager.h"
 #import "MemoryUserDefaults.h"
 #import "MenuPulse.h"
+#import "Monitors.h"
 #import "RefreshScheduler.h"
 #import "SettingsStore.h"
 #import "SettingsWindowController.h"
@@ -25,6 +26,7 @@ static void MPAssert(BOOL condition, NSString *message) {
 @property(nonatomic, strong) MPSettingsStore *settingsStore;
 @property(nonatomic, strong) MPLoginItemManager *loginItemManager;
 @property(nonatomic, strong) MPRefreshScheduler *refreshScheduler;
+@property(nonatomic, strong) MPCPUMonitor *cpuMonitor;
 @property(nonatomic, strong, nullable) MPSettingsWindowController *settingsWindowController;
 @property(nonatomic, strong, nullable) NSNumber *cachedCPU;
 @property(nonatomic, strong, nullable) NSNumber *cachedRAM;
@@ -34,6 +36,7 @@ static void MPAssert(BOOL condition, NSString *message) {
 @property(nonatomic, strong, nullable) MPTemperatureReader *temperatureReader;
 @property(nonatomic) BOOL temperatureReadInFlight;
 @property(nonatomic) BOOL cachedLoginEnabled;
+@property(nonatomic) BOOL screensAsleep;
 @property(nonatomic, copy) NSArray<NSString *> *lastRenderedRows;
 - (MPSettingsWindowController *)activeSettingsWindowController;
 - (NSArray<NSString *> *)statusRows;
@@ -43,10 +46,38 @@ static void MPAssert(BOOL condition, NSString *message) {
 - (void)releaseTemperatureReaderIfDisabled;
 - (void)handleOpenAtLoginPromptIfNeeded;
 - (void)refreshLoginStateFromSystem;
+- (BOOL)areScreensAsleep;
+- (void)refreshMetrics:(MPRefreshMetric)metrics;
 - (void)settingsWindowController:(MPSettingsWindowController *)controller
       didRequestLoginEnabled:(BOOL)enabled;
 - (void)settingsWindowControllerDidRequestResetDefaults:
     (MPSettingsWindowController *)controller;
+@end
+
+@interface MPTestMenuPulse : MPMenuPulse
+@property(nonatomic) BOOL initiallyAsleep;
+@end
+
+@implementation MPTestMenuPulse
+- (BOOL)areScreensAsleep { return self.initiallyAsleep; }
+@end
+
+@interface MPFakeCPUMonitor : MPCPUMonitor
+@property(nonatomic) BOOL baseline;
+@property(nonatomic) NSUInteger sampleCount;
+@end
+
+@implementation MPFakeCPUMonitor
+- (BOOL)hasBaseline { return self.baseline; }
+- (NSNumber *)usagePercent {
+    self.sampleCount += 1;
+    if (!self.baseline) {
+        self.baseline = YES;
+        return nil;
+    }
+    return @25.0;
+}
+- (void)reset { self.baseline = NO; }
 @end
 
 @interface MPFakeClock : NSObject <MPMonotonicClock>
@@ -108,6 +139,7 @@ static void MPAssert(BOOL condition, NSString *message) {
 - (void)closePressed:(id)sender;
 - (void)quitPressed:(id)sender;
 - (void)resetDefaultsPressed:(id)sender;
+- (void)openLatestRelease:(id)sender;
 @end
 
 @interface MPFakeTemperatureReader : MPTemperatureReader
@@ -139,6 +171,7 @@ static void MPAssert(BOOL condition, NSString *message) {
 @property(nonatomic) BOOL lastRequestedState;
 @property(nonatomic) NSUInteger openSettingsCount;
 @property(nonatomic) BOOL autoCompletes;
+@property(nonatomic) NSUInteger approvalReadCount;
 @property(nonatomic, strong) NSMutableArray<NSNumber *> *pendingStates;
 @property(nonatomic, strong) NSMutableArray<MPLoginItemUpdateCompletion> *pendingCompletions;
 - (void)completeRequestAtIndex:(NSUInteger)index success:(BOOL)success;
@@ -159,15 +192,8 @@ static void MPAssert(BOOL condition, NSString *message) {
     return self.fakeEnabled;
 }
 - (BOOL)requiresApproval {
+    self.approvalReadCount += 1;
     return self.fakeRequiresApproval;
-}
-- (BOOL)setEnabled:(BOOL)enabled {
-    self.setCallCount += 1;
-    self.lastRequestedState = enabled;
-    if (self.setSucceeds) {
-        self.fakeEnabled = enabled;
-    }
-    return self.setSucceeds;
 }
 - (void)setEnabled:(BOOL)enabled completion:(MPLoginItemUpdateCompletion)completion {
     self.setCallCount += 1;
@@ -279,7 +305,7 @@ static NSUserDefaults *MPMakeIsolatedDefaults(void) {
 
 static MPMenuPulse *MPMakePulse(NSUserDefaults *defaults,
                                 MPFakeLoginItemManager **managerOut) {
-    MPMenuPulse *pulse = [[MPMenuPulse alloc] initWithLoginItemMigrationEnabled:NO];
+    MPMenuPulse *pulse = [[MPTestMenuPulse alloc] initWithLoginItemMigrationEnabled:NO];
     pulse.settingsStore = [[MPSettingsStore alloc] initWithUserDefaults:defaults];
     MPFakeLoginItemManager *manager = [[MPFakeLoginItemManager alloc] init];
     pulse.loginItemManager = manager;
@@ -427,7 +453,7 @@ static void MPTestSettingsWindowControls(void) {
     MPSettingsWindowController *controller = [[MPSettingsWindowController alloc]
         initWithSettingsStore:store
                       delegate:delegate];
-    MPAssert(fabs(NSHeight(controller.window.contentView.bounds) - 420.0) < 0.5,
+    MPAssert(fabs(NSHeight(controller.window.contentView.bounds) - 455.0) < 0.5,
              @"settings window should fit its controls without excess bottom space");
 
     MPAssert([controller.cpuRAMRefreshPopup.itemTitles isEqualToArray:@[
@@ -460,7 +486,7 @@ static void MPTestSettingsWindowControls(void) {
     NSArray<NSString *> *requiredText = @[
         @"CPU & RAM refresh", @"Temperature refresh", @"Disk refresh",
         @"Faster temperature updates may use more energy.", @"Open at login",
-        @"Reset Defaults", @"Close", @"Quit",
+        @"Reset Defaults", @"Close", @"Quit", @"View Latest Release",
     ];
     for (NSString *text in requiredText) {
         MPAssert(MPViewContainsText(content, text),
@@ -527,6 +553,21 @@ static void MPTestSettingsWindowControls(void) {
              @"metric popup help should identify what is measured");
 
     [controller showSettingsWindow];
+    [content layoutSubtreeIfNeeded];
+    NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"]
+        ?: [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleVersion"];
+    MPAssert(MPViewContainsText(content, version.length > 0
+        ? [NSString stringWithFormat:@"Version %@", version] : @"Development build"),
+        @"settings should display this executable's bundle version");
+    __block NSURL *openedURL = nil;
+    controller.urlOpener = ^BOOL(NSURL *url) {
+        openedURL = url;
+        return YES;
+    };
+    [controller openLatestRelease:nil];
+    MPAssert([openedURL.absoluteString isEqualToString:
+        @"https://github.com/hyunseop827/menu-pulse/releases/latest"],
+        @"the update button should open the latest release page only on click");
     MPAssert(controller.window.isVisible, @"show should display the settings window");
     [controller closePressed:nil];
     MPAssert(!controller.window.isVisible, @"Close should hide only the settings window");
@@ -550,7 +591,7 @@ static void MPTestConfirmationAlerts(void) {
     MPAssert([capturedAlert.messageText isEqualToString:@"Quit Menu Pulse?"],
              @"Quit should use the requested confirmation title");
     MPAssert([capturedAlert.informativeText isEqualToString:
-        @"Menu bar monitoring will stop.\nOpen at login will remain enabled."],
+        @"Menu bar monitoring will stop.\nYour Open at login setting will stay unchanged."],
              @"Quit should explain both monitoring and login behavior");
     MPAssert([capturedAlert.buttons[0].title isEqualToString:@"Quit"] &&
              [capturedAlert.buttons[1].title isEqualToString:@"Cancel"],
@@ -568,7 +609,8 @@ static void MPTestConfirmationAlerts(void) {
     MPAssert([capturedAlert.messageText isEqualToString:@"Reset all settings?"],
              @"Reset should use the requested confirmation title");
     MPAssert([capturedAlert.informativeText containsString:@"CPU/RAM: On, every 3 seconds"] &&
-             [capturedAlert.informativeText containsString:@"Open at login: On"],
+             [capturedAlert.informativeText containsString:@"Open at login will also be turned on"] &&
+             [capturedAlert.informativeText containsString:@"may require approval"],
              @"Reset should list the settings it restores");
     MPAssert([capturedAlert.buttons[0].title isEqualToString:@"Reset"] &&
              [capturedAlert.buttons[1].title isEqualToString:@"Cancel"],
@@ -690,6 +732,16 @@ static void MPTestActivationRefreshesLoginState(void) {
              @"app activation should refresh the open login checkbox from SMAppService");
     MPAssert([[pulse statusTooltip] containsString:@"Open at login: On"],
              @"app activation should refresh the cached tooltip login state");
+    NSUInteger readsAfterActivation = manager.approvalReadCount;
+    for (NSUInteger index = 0; index < 10; index += 1) {
+        [pulse updateStatusImage];
+    }
+    MPAssert(manager.approvalReadCount == readsAfterActivation,
+             @"rendering repeated samples should not query system login approval");
+    manager.fakeRequiresApproval = YES;
+    [pulse refreshLoginStateFromSystem];
+    MPAssert([[pulse statusTooltip] containsString:@"Open at login: Needs approval"],
+             @"an explicit refresh should update cached approval state");
     [pulse.refreshScheduler stop];
 }
 
@@ -767,6 +819,77 @@ static void MPTestTemperatureLifecycle(MPMenuPulse *pulse) {
     NSTimeInterval delay = pulse.refreshScheduler.nextDelayAtCurrentTime;
     MPAssert(delay > 299.0 && delay <= MPTemperatureFailureRetryInterval,
              @"a failed read should defer the scheduler for five minutes");
+    MPAssert([[pulse statusTooltip] containsString:@"unavailable (retrying after a 5-minute cooldown)"],
+             @"a failed sensor read should explain why the value is unavailable");
+    [pulse requestTemperatureRead];
+    MPAssert([[pulse statusTooltip] containsString:@"warming up"],
+             @"a retry should display progress instead of a stale failure");
+    reader.completions[3](@42.0);
+    MPAssert(![[pulse statusTooltip] containsString:@"unavailable"],
+             @"a successful retry should clear the failure explanation");
+}
+
+static void MPTestDisplaySleepAndWake(void) {
+    MPMenuPulse *pulse = MPMakePulse(MPMakeIsolatedDefaults(), NULL);
+    pulse.settingsStore.hasCompletedOpenAtLoginPrompt = YES;
+    pulse.settingsStore.showTemperature = YES;
+    pulse.settingsStore.showDisk = YES;
+    MPFakeCPUMonitor *cpu = [[MPFakeCPUMonitor alloc] init];
+    MPFakeTemperatureReader *temperature = [[MPFakeTemperatureReader alloc] init];
+    pulse.cpuMonitor = cpu;
+    pulse.temperatureReader = temperature;
+    [pulse start];
+    MPAssert(cpu.sampleCount == 1 && cpu.hasBaseline && pulse.cachedCPU == nil,
+             @"startup should establish a CPU baseline");
+    MPAssert(temperature.completions.count == 1, @"startup should schedule one sensor read");
+    pulse.cachedCPU = @90.0;
+
+    NSNotificationCenter *workspaceCenter = NSWorkspace.sharedWorkspace.notificationCenter;
+    [workspaceCenter postNotificationName:NSWorkspaceScreensDidSleepNotification object:nil];
+    MPAssert(pulse.screensAsleep && !pulse.refreshScheduler.isRunning &&
+             !pulse.refreshScheduler.isTimerArmed && !cpu.hasBaseline,
+             @"display sleep should stop the timer and invalidate CPU baseline");
+    MPAssert(!pulse.temperatureReadInFlight && temperature.invalidateCount == 1 &&
+             pulse.cachedCPU == nil && pulse.cachedRAM == nil && pulse.cachedDisk == nil,
+             @"display sleep should cancel pending reads and discard old values");
+    [pulse refreshMetrics:MPRefreshMetricAll];
+    [pulse requestTemperatureRead];
+    MPAssert(cpu.sampleCount == 1 && temperature.completions.count == 1,
+             @"late timer callbacks and explicit temperature reads must do no sampling while asleep");
+    temperature.completions[0](@99.0);
+    MPAssert(pulse.cachedTemperature == nil && !pulse.temperatureReadInFlight,
+             @"a pre-sleep completion must not restore stale sensor data");
+    [workspaceCenter postNotificationName:NSWorkspaceScreensDidSleepNotification object:nil];
+    MPAssert(temperature.invalidateCount == 1, @"repeated sleep notifications should be harmless");
+
+    [workspaceCenter postNotificationName:NSWorkspaceScreensDidWakeNotification object:nil];
+    MPAssert(!pulse.screensAsleep && pulse.refreshScheduler.isRunning &&
+             cpu.sampleCount == 2 && cpu.hasBaseline && pulse.cachedCPU == nil,
+             @"wake should establish a fresh CPU baseline before reporting usage");
+    MPAssert(temperature.completions.count == 2 && pulse.temperatureReadInFlight,
+             @"wake should start a fresh sensor request");
+    temperature.completions[1](@51.0);
+    MPAssert([pulse.cachedTemperature isEqualToNumber:@51.0],
+             @"the new post-wake sensor reading should be applied");
+    [workspaceCenter postNotificationName:NSWorkspaceScreensDidWakeNotification object:nil];
+    MPAssert(cpu.sampleCount == 2, @"repeated wake notifications should not duplicate sampling");
+    [pulse.refreshScheduler stop];
+
+    MPTestMenuPulse *asleepPulse = (MPTestMenuPulse *)MPMakePulse(MPMakeIsolatedDefaults(), NULL);
+    asleepPulse.initiallyAsleep = YES;
+    asleepPulse.settingsStore.hasCompletedOpenAtLoginPrompt = YES;
+    MPFakeCPUMonitor *asleepCPU = [[MPFakeCPUMonitor alloc] init];
+    asleepPulse.cpuMonitor = asleepCPU;
+    [asleepPulse start];
+    MPAssert(!asleepPulse.refreshScheduler.isRunning && asleepCPU.sampleCount == 0,
+             @"an app launched while displays are already asleep should not sample");
+    [asleepPulse settingsWindowControllerDidRequestResetDefaults:[asleepPulse activeSettingsWindowController]];
+    MPAssert(!asleepPulse.refreshScheduler.isRunning && asleepCPU.sampleCount == 0,
+             @"resetting settings while asleep must not restart monitoring");
+    [workspaceCenter postNotificationName:NSWorkspaceScreensDidWakeNotification object:nil];
+    MPAssert(asleepPulse.refreshScheduler.isRunning && asleepCPU.sampleCount == 1,
+             @"an initially sleeping app should begin sampling at its first wake");
+    [asleepPulse.refreshScheduler stop];
 }
 
 static void MPTestStaleTemperatureFailurePreservesCooldown(void) {
@@ -860,6 +983,7 @@ int main(void) {
         MPTestTemperatureLifecycle(pulse);
         MPTestStaleTemperatureFailurePreservesCooldown();
         MPTestQueuedTemperatureCancellation();
+        MPTestDisplaySleepAndWake();
         MPTestAsyncLoginItemUpdates();
         MPTestLoginItemMigrationControl();
 

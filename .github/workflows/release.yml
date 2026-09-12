@@ -1,90 +1,164 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_call:
 
 permissions:
   contents: write
 
 jobs:
-  build:
+  release:
     runs-on: macos-latest
+    concurrency:
+      group: repository-release
+      cancel-in-progress: false
 
     steps:
-      - name: Checkout
+      - name: Checkout validated commit
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
 
-      - name: Check tag commit matches origin/main
+      - name: Check version and release state
+        id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           git fetch --no-tags origin "+refs/heads/main:refs/remotes/origin/main"
-          TAG_SHA="$(git rev-parse 'HEAD^{commit}')"
-          MAIN_SHA="$(git rev-parse 'refs/remotes/origin/main^{commit}')"
-          test "$TAG_SHA" = "$MAIN_SHA"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            > "$RUNNER_TEMP/menu-pulse-releases.json"
+          python3 <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import plistlib
+          import re
+          import subprocess
 
-      - name: Check shell scripts
-        run: bash -n Scripts/*.sh
+          def fail(message):
+              raise SystemExit(message)
 
-      - name: Check tag matches app metadata
-        run: |
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-          SHORT_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Packaging/Info.plist)"
-          BUNDLE_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' Packaging/Info.plist)"
-          BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' Packaging/Info.plist)"
-          test "$TAG_VERSION" = "$SHORT_VERSION"
-          test "$TAG_VERSION" = "$BUNDLE_VERSION"
-          test "$BUNDLE_ID" = "dev.hyunseop.MenuPulse"
+          def git(*args):
+              return subprocess.check_output(["git", *args], text=True).strip()
+
+          def version_tuple(value):
+              if not re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", value):
+                  fail(f"Invalid release version: {value!r}")
+              return tuple(map(int, value.split(".")))
+
+          def output(name, value):
+              with open(os.environ["GITHUB_OUTPUT"], "a") as stream:
+                  stream.write(f"{name}={value}\n")
+
+          metadata = plistlib.loads(Path("Packaging/Info.plist").read_bytes())
+          version = metadata.get("CFBundleShortVersionString", "")
+          current = version_tuple(version)
+          if metadata.get("CFBundleVersion") != version:
+              fail("Both app version values must match.")
+          if metadata.get("CFBundleIdentifier") != "dev.hyunseop.MenuPulse":
+              fail("Unexpected app bundle identifier.")
+          tag = f"v{version}"
+          notes = Path(".github/release-notes.md").read_text().splitlines()
+          if not notes or notes[0].strip() != f"# {tag}":
+              fail(f"Release notes must begin with '# {tag}'.")
+          body = "\n".join(notes[1:]).strip()
+          if not body:
+              fail("Release notes need a description of the changes.")
+
+          releases_file = Path(os.environ["RUNNER_TEMP"]) / "menu-pulse-releases.json"
+          releases = [release for page in json.loads(releases_file.read_text()) for release in page]
+          matching = next((release for release in releases if release["tag_name"] == tag), None)
+          tags = git("tag", "--list").splitlines()
+          known_tags = set(tags) | {release["tag_name"] for release in releases}
+          for known in known_tags:
+              if re.fullmatch(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", known):
+                  if version_tuple(known[1:]) > current:
+                      fail(f"Version {tag} is older than existing {known}; update the version and release notes.")
+
+          head = git("rev-parse", "HEAD^{commit}")
+          if head != os.environ["GITHUB_SHA"]:
+              fail("Checkout does not match the validated commit.")
+          tag_sha = git("rev-parse", f"refs/tags/{tag}^{{commit}}") if tag in tags else None
+          output("tag", tag)
+          if matching and not matching["draft"]:
+              if not tag_sha:
+                  fail(f"Published release {tag} has no local tag; cannot verify its build inputs.")
+              changed = subprocess.run(["git", "diff", "--quiet", tag_sha, head, "--",
+                                        "Sources", "Packaging", "Makefile"])
+              if changed.returncode == 1:
+                  fail(f"App inputs changed after {tag}; update both version values and release notes.")
+              if changed.returncode != 0:
+                  fail("Could not compare published app inputs.")
+              output("publish", "false")
+              output("verify", "true" if tag_sha == head else "false")
+              print(f"{tag} is already published; keeping its notes and assets.")
+          else:
+              if tag_sha and tag_sha != head:
+                  fail(f"Unpublished tag {tag} belongs to another commit; tags will not be moved.")
+              subprocess.run(["git", "merge-base", "--is-ancestor", head,
+                              "refs/remotes/origin/main"], check=True)
+              notice = "Apple Silicon arm64 build. Ad-hoc signed, not notarized; macOS Gatekeeper may show a warning on first launch."
+              (Path(os.environ["RUNNER_TEMP"]) / "menu-pulse-release-body.md").write_text(
+                  f"{body}\n\n{notice}\n")
+              output("publish", "true")
+              output("verify", "true")
+              output("tag_exists", "true" if tag_sha else "false")
+              output("release_exists", "true" if matching else "false")
+          PY
 
       - name: Build DMG
-        run: |
-          chmod +x Scripts/*.sh
-          Scripts/analyze.sh
-          Scripts/test.sh
-          Scripts/build-dmg.sh
+        if: steps.prepare.outputs.publish == 'true'
+        run: make dmg
 
-      - name: Verify app and DMG
+      - name: Create and push version tag
+        if: steps.prepare.outputs.publish == 'true' && steps.prepare.outputs.tag_exists == 'false'
+        env:
+          RELEASE_TAG: ${{ steps.prepare.outputs.tag }}
         run: |
-          codesign --verify --strict "build/release/Menu Pulse.app"
-          hdiutil verify dist/MenuPulse.dmg
-          test "$(lipo -archs 'build/release/Menu Pulse.app/Contents/MacOS/MenuPulse')" = arm64
-          file "build/release/Menu Pulse.app/Contents/MacOS/MenuPulse"
-          otool -L "build/release/Menu Pulse.app/Contents/MacOS/MenuPulse"
-          ! otool -L "build/release/Menu Pulse.app/Contents/MacOS/MenuPulse" | grep -q '/usr/lib/swift'
-
-      - name: Create checksum
-        run: |
-          cd dist
-          shasum -a 256 MenuPulse.dmg > ../SHA256SUMS.txt
+          git -c user.name='github-actions[bot]' \
+            -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            tag -a "$RELEASE_TAG" --cleanup=verbatim -F .github/release-notes.md
+          git push origin "refs/tags/$RELEASE_TAG"
 
       - name: Publish GitHub Release
+        if: steps.prepare.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.prepare.outputs.tag }}
+          RELEASE_EXISTS: ${{ steps.prepare.outputs.release_exists }}
         run: |
-          RELEASE_NOTES="Apple Silicon arm64 build. Ad-hoc signed, not notarized; macOS Gatekeeper may show a warning on first launch."
-          if RELEASE_IS_DRAFT="$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq '.isDraft' 2>/dev/null)"; then
-            :
-          else
-            gh release create "$GITHUB_REF_NAME" \
+          set -euo pipefail
+          if [[ "$RELEASE_EXISTS" == "false" ]]; then
+            gh release create "$RELEASE_TAG" \
               --draft \
               --verify-tag \
-              --title "$GITHUB_REF_NAME" \
-              --notes "$RELEASE_NOTES"
-            RELEASE_IS_DRAFT=true
+              --title "$RELEASE_TAG" \
+              --notes-file "$RUNNER_TEMP/menu-pulse-release-body.md"
           fi
+          RELEASE_IS_DRAFT="$(gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft')"
           if [[ "$RELEASE_IS_DRAFT" == "true" ]]; then
-            gh release upload "$GITHUB_REF_NAME" \
-              dist/MenuPulse.dmg \
-              SHA256SUMS.txt \
-              --clobber
+            gh release upload "$RELEASE_TAG" dist/MenuPulse.dmg dist/SHA256SUMS.txt --clobber
+            gh release edit "$RELEASE_TAG" --draft=false --prerelease=false
+          elif [[ "$RELEASE_IS_DRAFT" != "false" ]]; then
+            echo 'Could not determine whether the release is a draft.' >&2
+            exit 1
           fi
-          gh release edit "$GITHUB_REF_NAME" \
-            --draft=false \
-            --prerelease=false \
-            --title "$GITHUB_REF_NAME" \
-            --notes "$RELEASE_NOTES"
 
       - name: Re-download and verify published assets
+        if: steps.prepare.outputs.verify == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: Scripts/verify-release.sh "$GITHUB_REF_NAME"
+          RELEASE_TAG: ${{ steps.prepare.outputs.tag }}
+        run: |
+          VERIFY_DIR="$(mktemp -d -t menu-pulse-release-verify)"
+          trap 'rm -r -- "$VERIFY_DIR"' EXIT
+          gh release download "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --dir "$VERIFY_DIR" \
+            --pattern MenuPulse.dmg \
+            --pattern SHA256SUMS.txt
+          cd "$VERIFY_DIR"
+          shasum -a 256 -c SHA256SUMS.txt
+          hdiutil verify MenuPulse.dmg

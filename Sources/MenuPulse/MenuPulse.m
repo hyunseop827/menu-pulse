@@ -8,6 +8,7 @@
 #import "TemperatureReader.h"
 
 #import <AppKit/AppKit.h>
+#import <CoreGraphics/CoreGraphics.h>
 
 @interface MPMenuPulse () <MPSettingsWindowControllerDelegate>
 @property(nonatomic, strong) NSStatusItem *statusItem;
@@ -22,13 +23,17 @@
 @property(nonatomic, strong, nullable) NSNumber *cachedDisk;
 @property(nonatomic, strong, nullable) NSNumber *cachedDiskAvailableBytes;
 @property(nonatomic) BOOL temperatureReadInFlight;
+@property(nonatomic) BOOL temperatureReadFailed;
 @property(nonatomic) NSUInteger temperatureRequestGeneration;
 @property(nonatomic) BOOL cachedLoginEnabled;
+@property(nonatomic) BOOL cachedLoginRequiresApproval;
 @property(nonatomic) NSUInteger loginRequestGeneration;
 @property(nonatomic) BOOL loginRequestPending;
 @property(nonatomic, copy) NSArray<NSString *> *lastRenderedRows;
 @property(nonatomic, strong, nullable) MPSettingsWindowController *settingsWindowController;
 @property(nonatomic, strong, nullable) id appActivationObserver;
+@property(nonatomic, copy) NSArray<id> *displayObservers;
+@property(nonatomic) BOOL screensAsleep;
 @end
 
 @implementation MPMenuPulse
@@ -46,16 +51,22 @@
         _settingsStore = [[MPSettingsStore alloc] init];
         _cpuMonitor = [[MPCPUMonitor alloc] init];
         _lastRenderedRows = @[];
+        [_statusItem.button setAccessibilityLabel:@"Menu Pulse"];
+        [_statusItem.button setAccessibilityHelp:@"Opens Menu Pulse settings."];
     }
     return self;
 }
 
 - (void)start {
+    if (self.refreshScheduler) {
+        return;
+    }
     [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
     [self observeApplicationActivation];
+    [self observeDisplaySleep];
+    self.screensAsleep = [self areScreensAsleep];
 
-    self.cachedLoginEnabled = self.loginItemManager.isEnabled;
-    [self syncLoginControl];
+    [self refreshLoginStateFromSystem];
 
     NSStatusBarButton *button = self.statusItem.button;
     button.imagePosition = NSImageOnly;
@@ -69,7 +80,9 @@
     }];
     [self syncRefreshSchedulerIntervals];
     self.refreshScheduler.activeMetrics = [self activeRefreshMetrics];
-    [self.refreshScheduler start];
+    if (!self.screensAsleep) {
+        [self.refreshScheduler start];
+    }
     [self updateStatusImage];
 
     if (self.cachedLoginEnabled) {
@@ -123,14 +136,17 @@
 }
 
 - (void)showSettings {
-    self.cachedLoginEnabled = self.loginItemManager.isEnabled;
+    [self refreshLoginStateFromSystem];
     MPSettingsWindowController *controller = [self activeSettingsWindowController];
     controller.loginEnabled = self.cachedLoginEnabled;
     [controller showSettingsWindow];
 }
 
 - (void)handleOpenAtLoginPromptIfNeeded {
-    self.cachedLoginEnabled = self.loginItemManager.isEnabled;
+    if (self.screensAsleep) {
+        return;
+    }
+    [self refreshLoginStateFromSystem];
     if (self.cachedLoginEnabled) {
         self.settingsStore.hasCompletedOpenAtLoginPrompt = YES;
         [self syncLoginControl];
@@ -249,9 +265,10 @@
 
         strongSelf.loginRequestPending = NO;
         strongSelf.cachedLoginEnabled = strongSelf.loginItemManager.isEnabled;
+        strongSelf.cachedLoginRequiresApproval = strongSelf.loginItemManager.requiresApproval;
         [strongSelf syncLoginControl];
         if (!success) {
-            if (enabled && showApproval && strongSelf.loginItemManager.requiresApproval) {
+            if (enabled && showApproval && strongSelf.cachedLoginRequiresApproval) {
                 BOOL alreadyHadController = strongSelf.settingsWindowController != nil;
                 MPSettingsWindowController *controller =
                     [strongSelf activeSettingsWindowController];
@@ -289,8 +306,63 @@
 
 - (void)refreshLoginStateFromSystem {
     self.cachedLoginEnabled = self.loginItemManager.isEnabled;
+    self.cachedLoginRequiresApproval = self.loginItemManager.requiresApproval;
     if (!self.loginRequestPending) {
         [self syncLoginControl];
+    }
+    [self updateStatusImage];
+}
+
+- (BOOL)areScreensAsleep {
+    NSArray<NSScreen *> *screens = NSScreen.screens;
+    if (screens.count == 0) {
+        return NO;
+    }
+    for (NSScreen *screen in screens) {
+        NSNumber *displayID = screen.deviceDescription[@"NSScreenNumber"];
+        if (!displayID || !CGDisplayIsAsleep(displayID.unsignedIntValue)) {
+            return NO;
+        }
+    }
+    return YES;
+}
+
+- (void)observeDisplaySleep {
+    NSNotificationCenter *center = NSWorkspace.sharedWorkspace.notificationCenter;
+    __weak typeof(self) weakSelf = self;
+    self.displayObservers = @[
+        [center addObserverForName:NSWorkspaceScreensDidSleepNotification object:nil
+                            queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
+            (void)note;
+            weakSelf.screensAsleep = YES;
+        }],
+        [center addObserverForName:NSWorkspaceScreensDidWakeNotification object:nil
+                            queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
+            (void)note;
+            weakSelf.screensAsleep = NO;
+        }],
+    ];
+}
+
+- (void)setScreensAsleep:(BOOL)screensAsleep {
+    if (_screensAsleep == screensAsleep) {
+        return;
+    }
+    _screensAsleep = screensAsleep;
+    [self.refreshScheduler stop];
+    [self.cpuMonitor reset];
+    self.cachedCPU = nil;
+    self.cachedRAM = nil;
+    self.cachedDisk = nil;
+    self.cachedDiskAvailableBytes = nil;
+    [self cancelTemperatureRead];
+
+    if (!screensAsleep && self.refreshScheduler) {
+        // Fresh baselines avoid including the invisible interval in CPU usage.
+        // The scheduler keeps any outstanding sensor failure cooldown.
+        [self.refreshScheduler invalidateLastSampleForMetrics:MPRefreshMetricAll];
+        [self.refreshScheduler start];
+        [self handleOpenAtLoginPromptIfNeeded];
     }
     [self updateStatusImage];
 }
@@ -319,6 +391,9 @@
 }
 
 - (void)refreshMetrics:(MPRefreshMetric)metrics {
+    if (self.screensAsleep) {
+        return;
+    }
     if ((metrics & MPRefreshMetricCPU) != 0 && self.showCPU) {
         BOOL hadCPUBaseline = self.cpuMonitor.hasBaseline;
         self.cachedCPU = [self.cpuMonitor usagePercent];
@@ -357,6 +432,10 @@
         return;
     }
 
+    [self cancelTemperatureRead];
+}
+
+- (void)cancelTemperatureRead {
     self.temperatureRequestGeneration += 1;
     self.temperatureReadInFlight = NO;
     self.cachedTemperature = nil;
@@ -365,11 +444,12 @@
 }
 
 - (void)requestTemperatureRead {
-    if (self.temperatureReadInFlight || !self.showTemperature) {
+    if (self.screensAsleep || self.temperatureReadInFlight || !self.showTemperature) {
         return;
     }
 
     self.temperatureReadInFlight = YES;
+    self.temperatureReadFailed = NO;
     [self.refreshScheduler setMetric:MPRefreshMetricTemperature paused:YES];
     NSUInteger generation = ++self.temperatureRequestGeneration;
 
@@ -383,12 +463,16 @@
         if (!temperatureCelsius) {
             [strongSelf.refreshScheduler deferMetric:MPRefreshMetricTemperature
                                          forInterval:MPTemperatureFailureRetryInterval];
+            if (!strongSelf.cachedTemperature) {
+                strongSelf.temperatureReadFailed = YES;
+            }
         }
         if (generation != strongSelf.temperatureRequestGeneration) {
             return;
         }
 
         strongSelf.temperatureReadInFlight = NO;
+        strongSelf.temperatureReadFailed = temperatureCelsius == nil;
         [strongSelf.refreshScheduler setMetric:MPRefreshMetricTemperature paused:NO];
 
         strongSelf.cachedTemperature = strongSelf.showTemperature ? temperatureCelsius : nil;
@@ -401,16 +485,19 @@
     if (observer) {
         [NSNotificationCenter.defaultCenter removeObserver:observer];
     }
+    for (id displayObserver in self.displayObservers) {
+        [NSWorkspace.sharedWorkspace.notificationCenter removeObserver:displayObserver];
+    }
 }
 
 - (void)updateStatusImage {
     NSArray<NSString *> *rows = [self statusRows];
     NSString *tooltip = [self statusTooltip];
-    [self.statusItem.button setAccessibilityLabel:@"Menu Pulse"];
-    [self.statusItem.button setAccessibilityValue:tooltip];
-    [self.statusItem.button setAccessibilityHelp:@"Opens Menu Pulse settings."];
-    if ([rows isEqualToArray:self.lastRenderedRows]) {
+    if (![self.statusItem.button.toolTip isEqualToString:tooltip]) {
         self.statusItem.button.toolTip = tooltip;
+        [self.statusItem.button setAccessibilityValue:tooltip];
+    }
+    if ([rows isEqualToArray:self.lastRenderedRows]) {
         return;
     }
 
@@ -419,7 +506,6 @@
     self.statusItem.length = image.size.width;
     self.statusItem.button.title = @"";
     self.statusItem.button.image = image;
-    self.statusItem.button.toolTip = tooltip;
 }
 
 - (NSArray<NSString *> *)statusRows {
@@ -507,8 +593,14 @@
                           [self formatInterval:self.cpuRAMRefreshIntervalSeconds]]];
     }
     if (self.showTemperature) {
-        NSString *temperature = self.temperatureReadInFlight && !self.cachedTemperature
-            ? @"warming up" : [self formatTemperature:self.cachedTemperature];
+        NSString *temperature = [self formatTemperature:self.cachedTemperature];
+        if (!self.cachedTemperature) {
+            if (self.temperatureReadInFlight) {
+                temperature = @"warming up";
+            } else if (self.temperatureReadFailed) {
+                temperature = @"unavailable (retrying after a 5-minute cooldown)";
+            }
+        }
         [lines addObject:[NSString stringWithFormat:@"TEMP (hottest sensor): %@ (every %@)",
                           temperature,
                           [self formatInterval:self.temperatureRefreshIntervalSeconds]]];
@@ -523,7 +615,10 @@
         [lines addObject:@"No metrics enabled"];
     }
 
-    NSString *loginState = self.loginItemManager.requiresApproval
+    if (self.screensAsleep) {
+        [lines addObject:@"Monitoring paused while displays are asleep"];
+    }
+    NSString *loginState = self.cachedLoginRequiresApproval
         ? @"Needs approval" : (self.cachedLoginEnabled ? @"On" : @"Off");
     [lines addObject:[NSString stringWithFormat:@"Open at login: %@", loginState]];
     [lines addObject:@"Click to open settings"];

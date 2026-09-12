@@ -2,8 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-APP_PATH="$ROOT_DIR/build/release/Menu Pulse.app"
-BIN_PATH="$APP_PATH/Contents/MacOS/MenuPulse"
+APP_PATH=""
+BIN_PATH=""
 DMG_PATH="$ROOT_DIR/dist/MenuPulse.dmg"
 
 WARMUP="${WARMUP:-30}"
@@ -19,6 +19,7 @@ SHOW_DISK="${SHOW_DISK:-0}"
 ALL_METRICS="${ALL_METRICS:-}"
 
 BENCHMARK_PID=""
+BENCHMARK_DIR=""
 BENCHMARK_HOME=""
 BENCHMARK_TEMP_ROOT=""
 SAMPLE_FILE=""
@@ -56,9 +57,6 @@ boolean_argument() {
 }
 
 cleanup() {
-  local benchmark_home_parent=""
-  local expected_temp_parent=""
-
   if [[ -n "$BENCHMARK_PID" ]] && kill -0 "$BENCHMARK_PID" >/dev/null 2>&1; then
     kill -TERM "$BENCHMARK_PID" >/dev/null 2>&1 || true
 
@@ -79,19 +77,11 @@ cleanup() {
     wait "$BENCHMARK_PID" >/dev/null 2>&1 || true
   fi
 
-  [[ -z "$SAMPLE_FILE" ]] || rm -f "$SAMPLE_FILE"
-  [[ -z "$LOG_FILE" ]] || rm -f "$LOG_FILE"
-
-  if [[ -n "$BENCHMARK_HOME" && -d "$BENCHMARK_HOME" ]]; then
-    benchmark_home_parent="$(cd "$(dirname "$BENCHMARK_HOME")" && pwd -P)"
-    expected_temp_parent="$BENCHMARK_TEMP_ROOT"
+  if [[ -n "$BENCHMARK_DIR" && -d "$BENCHMARK_DIR" &&
+        "$BENCHMARK_DIR" == "$BENCHMARK_TEMP_ROOT"/menu-pulse-benchmark.* ]]; then
+    /bin/rm -r -- "$BENCHMARK_DIR"
   fi
-  if [[ -n "$BENCHMARK_HOME" &&
-        "$(basename "$BENCHMARK_HOME")" == menu-pulse-benchmark-home.* &&
-        "$benchmark_home_parent" == "$expected_temp_parent" ]]; then
-    /bin/rm -rf -- "$BENCHMARK_HOME"
-  fi
-  BENCHMARK_HOME=""
+  BENCHMARK_DIR=""
 }
 
 trap cleanup EXIT
@@ -143,7 +133,17 @@ BENCHMARK_TEMP_ROOT="$(cd "${TMPDIR:-/tmp}" && pwd -P)"
   fail "TMPDIR must resolve to a non-root directory."
 
 echo "Building Menu Pulse for measurement..."
-"$ROOT_DIR/Scripts/build-app.sh" >/dev/null
+BENCHMARK_DIR="$(mktemp -d "$BENCHMARK_TEMP_ROOT/menu-pulse-benchmark.XXXXXX")"
+APP_PATH="$BENCHMARK_DIR/Build/Menu Pulse.app"
+BIN_PATH="$APP_PATH/Contents/MacOS/MenuPulse"
+BENCHMARK_HOME="$BENCHMARK_DIR/Home"
+SAMPLE_FILE="$BENCHMARK_DIR/samples.txt"
+LOG_FILE="$BENCHMARK_DIR/app.log"
+/bin/mkdir -p "$BENCHMARK_HOME/Library/Preferences"
+# A distinct bundle identifier keeps measurement builds separate from the
+# installed app's ServiceManagement registration. All output is temporary.
+make -s -C "$ROOT_DIR" app BUILD_DIR="$BENCHMARK_DIR/Build" \
+  BUNDLE_ID=dev.hyunseop.MenuPulse.Benchmark >/dev/null
 [[ -x "$BIN_PATH" ]] || fail "Built executable was not found: $BIN_PATH"
 
 SHOW_CPU_ARGUMENT="$(boolean_argument "$SHOW_CPU")"
@@ -156,11 +156,6 @@ SCENARIO_PARTS=()
 [[ "$SHOW_TEMPERATURE" == "0" ]] || SCENARIO_PARTS+=(TEMP)
 [[ "$SHOW_DISK" == "0" ]] || SCENARIO_PARTS+=(DISK)
 SCENARIO="$(IFS=/; echo "${SCENARIO_PARTS[*]}")"
-
-SAMPLE_FILE="$(mktemp "$BENCHMARK_TEMP_ROOT/menu-pulse-samples.XXXXXX")"
-LOG_FILE="$(mktemp "$BENCHMARK_TEMP_ROOT/menu-pulse-measure.XXXXXX")"
-BENCHMARK_HOME="$(mktemp -d "$BENCHMARK_TEMP_ROOT/menu-pulse-benchmark-home.XXXXXX")"
-/bin/mkdir -p "$BENCHMARK_HOME/Library/Preferences"
 
 # The command-line pairs select the scenario through NSArgumentDomain.
 # CFFIXED_USER_HOME isolates persistent defaults, including legacy-key cleanup.

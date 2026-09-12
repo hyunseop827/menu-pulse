@@ -6,6 +6,7 @@ NS_ASSUME_NONNULL_BEGIN
 @class MPSettingsWindowController;
 
 typedef NSModalResponse (^MPSettingsAlertRunner)(NSAlert *alert);
+typedef BOOL (^MPSettingsURLOpener)(NSURL *url);
 
 @protocol MPSettingsWindowControllerDelegate <NSObject>
 - (void)settingsWindowControllerDidChangeMetrics:(MPSettingsWindowController *)controller;
@@ -30,6 +31,7 @@ typedef NSModalResponse (^MPSettingsAlertRunner)(NSAlert *alert);
 @property(nonatomic, weak) id<MPSettingsWindowControllerDelegate> delegate;
 @property(nonatomic) BOOL loginEnabled;
 @property(nonatomic, copy) MPSettingsAlertRunner alertRunner;
+@property(nonatomic, copy) MPSettingsURLOpener urlOpener;
 
 - (void)showSettingsWindow;
 - (void)closeSettingsWindow;
