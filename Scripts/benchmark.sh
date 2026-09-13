@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 APP_PATH=""
 BIN_PATH=""
-DMG_PATH="$ROOT_DIR/dist/MenuPulse.dmg"
+RESULTS_DIR="${RESULTS_DIR:-$ROOT_DIR/build/benchmarks}"
 
 WARMUP="${WARMUP:-30}"
 DURATION="${DURATION:-300}"
@@ -24,6 +24,7 @@ BENCHMARK_HOME=""
 BENCHMARK_TEMP_ROOT=""
 SAMPLE_FILE=""
 LOG_FILE=""
+REPORT_TEE_PID=""
 
 fail() {
   echo "Error: $*" >&2
@@ -82,6 +83,13 @@ cleanup() {
     /bin/rm -r -- "$BENCHMARK_DIR"
   fi
   BENCHMARK_DIR=""
+
+  if [[ -n "$REPORT_TEE_PID" ]]; then
+    # Close the report pipe and wait for tee so the saved report is complete
+    # when the benchmark exits, including on an interrupted run.
+    exec 1>&3 2>&4 3>&- 4>&-
+    wait "$REPORT_TEE_PID" || true
+  fi
 }
 
 trap cleanup EXIT
@@ -132,19 +140,55 @@ BENCHMARK_TEMP_ROOT="$(cd "${TMPDIR:-/tmp}" && pwd -P)"
 [[ -n "$BENCHMARK_TEMP_ROOT" && "$BENCHMARK_TEMP_ROOT" != "/" ]] || \
   fail "TMPDIR must resolve to a non-root directory."
 
-echo "Building Menu Pulse for measurement..."
+mkdir -p "$RESULTS_DIR"
+RESULTS_DIR="$(cd "$RESULTS_DIR" && pwd -P)"
+RESULT_DIR="$(mktemp -d "$RESULTS_DIR/run-$(date -u +%Y%m%dT%H%M%SZ).XXXXXX")"
 BENCHMARK_DIR="$(mktemp -d "$BENCHMARK_TEMP_ROOT/menu-pulse-benchmark.XXXXXX")"
+SAMPLE_FILE="$RESULT_DIR/samples.txt"
+LOG_FILE="$RESULT_DIR/app.log"
+VMMAP_FILE="$RESULT_DIR/vmmap.txt"
+exec 3>&1 4>&2
+# A normal background job is waitable even with macOS's bundled Bash 3.2.
+mkfifo "$BENCHMARK_DIR/report.pipe"
+tee "$RESULT_DIR/report.txt" < "$BENCHMARK_DIR/report.pipe" &
+REPORT_TEE_PID=$!
+exec > "$BENCHMARK_DIR/report.pipe" 2>&1
+
+echo "Menu Pulse benchmark"
+echo "Started (UTC): $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+echo "Results: $RESULT_DIR"
+echo "Build source: current checkout, rebuilt with bundle ID dev.hyunseop.MenuPulse.Benchmark"
+echo "This measures a temporary build, not the downloaded GitHub DMG."
+echo "Git commit: $(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || echo unavailable)"
+if GIT_STATUS="$(git -C "$ROOT_DIR" status --porcelain 2>/dev/null)"; then
+  if [[ -z "$GIT_STATUS" ]]; then echo "Git worktree: clean"; else echo "Git worktree: dirty"; fi
+else
+  echo "Git worktree: unavailable"
+fi
+echo "macOS: $(sw_vers -productVersion) ($(sw_vers -buildVersion))"
+echo "Mac model: $(sysctl -n hw.model)"
+echo "Chip: $(sysctl -n machdep.cpu.brand_string)"
+echo "Architecture: $(uname -m)"
+awk -v bytes="$(sysctl -n hw.memsize)" \
+  'BEGIN { printf "Physical RAM: %.1f GiB (%s bytes)\n", bytes / 1024 / 1024 / 1024, bytes }'
+echo "Power source: $(pmset -g batt | sed -n '1p')"
+echo "Workload: menu bar only at launch; no automated interaction with settings."
+echo "Other apps, display sleep, and power settings are not controlled by this script."
+echo "CPU: repeated ps %cpu samples (a decaying average over up to one minute), not interval CPU time."
+echo "Memory: RSS samples and end-of-run vmmap Private dirty are separate measures."
+echo "Private dirty is not total memory usage or physical footprint. Memory units are binary (MiB)."
+
+echo "Building Menu Pulse for measurement..."
 APP_PATH="$BENCHMARK_DIR/Build/Menu Pulse.app"
 BIN_PATH="$APP_PATH/Contents/MacOS/MenuPulse"
 BENCHMARK_HOME="$BENCHMARK_DIR/Home"
-SAMPLE_FILE="$BENCHMARK_DIR/samples.txt"
-LOG_FILE="$BENCHMARK_DIR/app.log"
 /bin/mkdir -p "$BENCHMARK_HOME/Library/Preferences"
 # A distinct bundle identifier keeps measurement builds separate from the
-# installed app's ServiceManagement registration. All output is temporary.
+# installed app's ServiceManagement registration. Only results are retained.
 make -s -C "$ROOT_DIR" app BUILD_DIR="$BENCHMARK_DIR/Build" \
   BUNDLE_ID=dev.hyunseop.MenuPulse.Benchmark >/dev/null
 [[ -x "$BIN_PATH" ]] || fail "Built executable was not found: $BIN_PATH"
+echo "App version: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Contents/Info.plist")"
 
 SHOW_CPU_ARGUMENT="$(boolean_argument "$SHOW_CPU")"
 SHOW_RAM_ARGUMENT="$(boolean_argument "$SHOW_RAM")"
@@ -206,7 +250,7 @@ fi
 
 SAMPLE_COUNT=$(( (DURATION + INTERVAL - 1) / INTERVAL ))
 echo "Measurement: ${DURATION}s (${SAMPLE_COUNT} samples, ${INTERVAL}s sample interval)"
-printf 'sample pcpu rss_kb\n' > "$SAMPLE_FILE"
+printf 'sample pcpu rss_kib\n' > "$SAMPLE_FILE"
 
 for ((sample = 1; sample <= SAMPLE_COUNT; sample += 1)); do
   if ! kill -0 "$BENCHMARK_PID" >/dev/null 2>&1; then
@@ -238,18 +282,19 @@ awk '
   }
   END {
     if (count == 0) exit 1
-    printf "CPU average: %.3f%%\n", cpu_sum / count
-    printf "CPU maximum: %.3f%%\n", cpu_max
-    printf "RSS average: %.1f MB\n", (rss_sum / count) / 1024
-    printf "RSS maximum: %.1f MB\n", rss_max / 1024
+    printf "Samples collected: %d\n", count
+    printf "CPU sample average: %.3f%%\n", cpu_sum / count
+    printf "CPU sample maximum: %.3f%%\n", cpu_max
+    printf "RSS average: %.1f MiB\n", (rss_sum / count) / 1024
+    printf "RSS maximum: %.1f MiB\n", rss_max / 1024
   }
 ' "$SAMPLE_FILE"
 
 PRIVATE_DIRTY=""
-if command -v vmmap >/dev/null 2>&1; then
+if command -v vmmap >/dev/null 2>&1 && vmmap -summary "$BENCHMARK_PID" > "$VMMAP_FILE" 2>&1; then
   PRIVATE_DIRTY="$(
-    vmmap -summary "$BENCHMARK_PID" 2>/dev/null | awk '
-      function to_mb(value) {
+    awk '
+      function to_mib(value) {
         unit = substr(value, length(value), 1)
         amount = substr(value, 1, length(value) - 1) + 0
         if (unit == "K") return amount / 1024
@@ -257,30 +302,26 @@ if command -v vmmap >/dev/null 2>&1; then
         if (unit == "G") return amount * 1024
         return value / 1024 / 1024
       }
-      /^TOTAL, minus reserved VM space/ {
+      /^TOTAL[[:space:]]|^TOTAL, minus reserved VM space/ {
         count = 0
         for (i = 1; i <= NF; i += 1) {
           if ($i ~ /^[0-9.]+[KMG]?$/) sizes[++count] = $i
         }
-        if (count >= 3) printf "%.1f MB", to_mb(sizes[3])
-        exit
+        if (count >= 3) dirty = to_mib(sizes[3])
       }
-    '
+      END { if (dirty != "") printf "%.1f MiB", dirty }
+    ' "$VMMAP_FILE"
   )"
+else
+  echo "vmmap unavailable or failed; Private dirty could not be measured." >> "$VMMAP_FILE"
 fi
 
 if [[ -n "$PRIVATE_DIRTY" ]]; then
-  echo "Private dirty: $PRIVATE_DIRTY"
+  echo "Private dirty (vmmap DIRTY total, end of run): $PRIVATE_DIRTY"
 else
   echo "Private dirty: unavailable"
 fi
 
 APP_SIZE_KB="$(du -sk "$APP_PATH" | awk '{ print $1 }')"
-awk -v size_kb="$APP_SIZE_KB" 'BEGIN { printf "App size: %.1f MB\n", size_kb / 1024 }'
-
-if [[ -f "$DMG_PATH" ]]; then
-  DMG_SIZE_BYTES="$(stat -f '%z' "$DMG_PATH")"
-  awk -v size_bytes="$DMG_SIZE_BYTES" 'BEGIN { printf "DMG size: %.1f MB\n", size_bytes / 1024 / 1024 }'
-else
-  echo "DMG size: unavailable ($DMG_PATH not found)"
-fi
+awk -v size_kb="$APP_SIZE_KB" 'BEGIN { printf "App disk usage: %.1f MiB\n", size_kb / 1024 }'
+echo "Completed (UTC): $(date -u +%Y-%m-%dT%H:%M:%SZ)"
