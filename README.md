@@ -9,7 +9,7 @@
 A compact CPU and RAM readout for your Mac's menu bar. Temperature and disk usage are optional.
 
 <p align="center">
-  <img src="menupulse-menubar.png" alt="Menu Pulse default CPU and RAM readout" width="88">
+  <img src="menupulse-menubar.png" alt="Menu Pulse default CPU and RAM readout" width="160">
 </p>
 
 ## Download
@@ -45,7 +45,7 @@ shasum -a 256 -c SHA256SUMS.txt
 One or two metrics appear one per line. With three or four, CPU and RAM form the left column and TEMP and DISK the right.
 
 <p align="center">
-  <img src="menupulse-menubar-all.png" alt="Menu Pulse showing CPU, RAM, TEMP, and DISK" width="169">
+  <img src="menupulse-menubar-all.png" alt="Menu Pulse showing CPU, RAM, TEMP, and DISK" width="322">
 </p>
 
 TEMP supports Celsius and Fahrenheit and shows the hottest component sensor the app can read; battery and calibration sensors are ignored. Sensor availability varies by Mac and macOS version; a failed read shows `--` and is retried every five minutes. DISK shows usage of the home volume and, like Finder, counts purgeable space as available. Hover over the menu bar item for details such as free disk space and TEMP status.
@@ -83,13 +83,6 @@ make dmg      # Create dist/MenuPulse.dmg and SHA256SUMS.txt
 ```
 
 Xcode Command Line Tools are required. Building and testing do not install the app or register login items. Test executables run in a temporary directory and are removed afterward.
-
-<details>
-<summary>Clean up login items from older development builds</summary>
-
-If an older development run left `MenuPulseUITests` or a deleted app in automatic startup, remove it under **System Settings → General → Login Items & Extensions → Open at Login**. Deleting repository files does not unregister existing login items.
-
-</details>
 
 ## Benchmark
 

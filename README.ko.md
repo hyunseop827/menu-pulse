@@ -9,7 +9,7 @@
 CPU와 RAM 사용량을 Mac 메뉴바에서 한눈에 확인하는 작은 앱입니다. 온도와 디스크 사용량은 필요할 때 켤 수 있습니다.
 
 <p align="center">
-  <img src="menupulse-menubar.png" alt="Menu Pulse 기본 CPU·RAM 표시" width="88">
+  <img src="menupulse-menubar.png" alt="Menu Pulse 기본 CPU·RAM 표시" width="160">
 </p>
 
 ## 다운로드
@@ -45,7 +45,7 @@ shasum -a 256 -c SHA256SUMS.txt
 지표를 한두 개 켜면 한 줄에 하나씩 표시합니다. 세 개 이상이면 CPU·RAM은 왼쪽, TEMP·DISK는 오른쪽 열에 표시합니다.
 
 <p align="center">
-  <img src="menupulse-menubar-all.png" alt="Menu Pulse의 CPU·RAM·TEMP·DISK 표시" width="169">
+  <img src="menupulse-menubar-all.png" alt="Menu Pulse의 CPU·RAM·TEMP·DISK 표시" width="322">
 </p>
 
 TEMP는 섭씨와 화씨를 지원하며 앱에서 읽을 수 있는 부품 센서 중 가장 높은 온도를 표시합니다. 배터리와 보정용 센서는 제외합니다. Mac 기종과 macOS 버전에 따라 센서를 읽지 못할 수 있으며, 실패하면 `--`를 표시하고 5분마다 재시도합니다. DISK는 홈 볼륨 사용량을 표시하며, Finder와 같이 시스템이 비울 수 있는 공간도 사용 가능한 공간으로 계산합니다. 남은 디스크 공간과 TEMP 상태 같은 자세한 내용은 메뉴바 항목에 마우스를 올리면 확인할 수 있습니다.
@@ -83,13 +83,6 @@ make dmg      # dist/MenuPulse.dmg와 SHA256SUMS.txt 생성
 ```
 
 Xcode Command Line Tools가 필요합니다. 빌드·테스트는 앱 설치나 로그인 항목 등록을 하지 않습니다. 테스트 실행 파일은 임시 폴더에서 실행한 뒤 정리합니다.
-
-<details>
-<summary>이전 개발 빌드의 로그인 항목 정리</summary>
-
-이전 개발 과정에서 등록된 `MenuPulseUITests`나 삭제한 앱이 자동 실행 목록에 남아 있다면 **시스템 설정 → 일반 → 로그인 항목 및 확장 프로그램 → 로그인 시 열기**에서 제거합니다. 저장소 파일을 지우는 것만으로 기존 로그인 등록이 해제되지는 않습니다.
-
-</details>
 
 ## 벤치마크
 
