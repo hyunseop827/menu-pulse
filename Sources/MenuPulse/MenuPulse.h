@@ -3,6 +3,7 @@
 NS_ASSUME_NONNULL_BEGIN
 
 @interface MPMenuPulse : NSObject
+- (instancetype)init NS_UNAVAILABLE;
 - (instancetype)initWithLoginItemMigrationEnabled:(BOOL)loginItemMigrationEnabled NS_DESIGNATED_INITIALIZER;
 - (void)start;
 @end

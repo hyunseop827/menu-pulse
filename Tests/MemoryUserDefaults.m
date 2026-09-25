@@ -21,6 +21,10 @@
     return value ?: self.registeredValues[defaultName];
 }
 
+- (nullable id)storedObjectForKey:(NSString *)defaultName {
+    return self.storedValues[defaultName];
+}
+
 - (void)setObject:(nullable id)value forKey:(NSString *)defaultName {
     if (value) {
         self.storedValues[defaultName] = value;

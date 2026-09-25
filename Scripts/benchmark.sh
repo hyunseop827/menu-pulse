@@ -259,7 +259,7 @@ for ((sample = 1; sample <= SAMPLE_COUNT; sample += 1)); do
     exit 1
   fi
 
-  PROCESS_SAMPLE="$(ps -p "$BENCHMARK_PID" -o pcpu= -o rss=)"
+  PROCESS_SAMPLE="$(ps -p "$BENCHMARK_PID" -o pcpu= -o rss= || true)"
   [[ -n "$PROCESS_SAMPLE" ]] || fail "Could not sample PID $BENCHMARK_PID."
   awk -v sample="$sample" '{ print sample, $1, $2 }' <<< "$PROCESS_SAMPLE" >> "$SAMPLE_FILE"
 

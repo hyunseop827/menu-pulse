@@ -2,7 +2,40 @@
 
 #import "SettingsStore.h"
 
-@interface MPSettingsWindowController ()
+static NSString * const MPSettingsWindowFrameName = @"MenuPulseSettings";
+
+/// Menu Pulse has no main menu, so the window handles its own close keys.
+@interface MPSettingsWindow : NSWindow
+@end
+
+@implementation MPSettingsWindow
+
+- (BOOL)performKeyEquivalent:(NSEvent *)event {
+    // Ignore Caps Lock and other state flags, as menu key equivalents do.
+    NSEventModifierFlags modifiers = event.modifierFlags &
+        (NSEventModifierFlagCommand | NSEventModifierFlagShift |
+         NSEventModifierFlagOption | NSEventModifierFlagControl);
+    // Match the character the layout produces with Command held, as menus
+    // do. Non-Latin layouts without a Command map fall back to the physical
+    // W key (kVK_ANSI_W) only when the character is not ASCII.
+    NSString *commandKey = event.characters.lowercaseString;
+    NSString *key = event.charactersIgnoringModifiers.lowercaseString;
+    BOOL isW = [commandKey isEqualToString:@"w"] || [key isEqualToString:@"w"] ||
+        (key.length > 0 && [key characterAtIndex:0] > 0x7F && event.keyCode == 13);
+    if (modifiers == NSEventModifierFlagCommand && isW) {
+        [self performClose:nil];
+        return YES;
+    }
+    return [super performKeyEquivalent:event];
+}
+
+- (void)cancelOperation:(id)sender {
+    [self performClose:sender];
+}
+
+@end
+
+@interface MPSettingsWindowController () <NSWindowDelegate>
 @property(nonatomic, strong) MPSettingsStore *settingsStore;
 @property(nonatomic, strong) NSButton *cpuCheckbox;
 @property(nonatomic, strong) NSButton *temperatureCheckbox;
@@ -19,7 +52,7 @@
 
 - (instancetype)initWithSettingsStore:(MPSettingsStore *)settingsStore
                               delegate:(id<MPSettingsWindowControllerDelegate>)delegate {
-    NSWindow *window = [[NSWindow alloc]
+    NSWindow *window = [[MPSettingsWindow alloc]
         initWithContentRect:NSMakeRect(0, 0, 390, 455)
                   styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable)
                     backing:NSBackingStoreBuffered
@@ -52,7 +85,11 @@
 - (void)configureWindow {
     self.window.title = @"Menu Pulse Settings";
     self.window.releasedWhenClosed = NO;
+    self.window.delegate = self;
     [self.window center];
+    // The controller is released when the window closes, so keep the
+    // position the user chose for the next time Settings opens.
+    self.window.frameAutosaveName = MPSettingsWindowFrameName;
 
     NSView *contentView = [[NSView alloc] init];
     self.window.contentView = contentView;
@@ -267,23 +304,11 @@
     popup.action = action;
     [popup.widthAnchor constraintEqualToConstant:180].active = YES;
     for (NSNumber *interval in intervals) {
-        [popup addItemWithTitle:[self titleForInterval:interval.doubleValue]];
+        [popup addItemWithTitle:
+            [@"Every " stringByAppendingString:MPIntervalDescription(interval.doubleValue)]];
         popup.lastItem.representedObject = interval;
     }
     return popup;
-}
-
-- (NSString *)titleForInterval:(NSTimeInterval)interval {
-    NSInteger seconds = (NSInteger)llround(interval);
-    if (seconds >= 60 && seconds % 60 == 0) {
-        NSInteger minutes = seconds / 60;
-        return [NSString stringWithFormat:@"Every %ld minute%@",
-                                          (long)minutes,
-                                          minutes == 1 ? @"" : @"s"];
-    }
-    return [NSString stringWithFormat:@"Every %ld second%@",
-                                      (long)seconds,
-                                      seconds == 1 ? @"" : @"s"];
 }
 
 - (void)syncControls {
@@ -372,6 +397,16 @@
     [self closeSettingsWindow];
 }
 
+- (void)windowWillClose:(NSNotification *)notification {
+    (void)notification;
+    // AppKit keeps a closed window alive briefly, and a live window keeps
+    // its autosave name. Save now and release the name so a window opened
+    // right away can restore this position.
+    [self.window saveFrameUsingName:MPSettingsWindowFrameName];
+    self.window.frameAutosaveName = @"";
+    [self.delegate settingsWindowControllerDidCloseWindow:self];
+}
+
 - (void)openLatestRelease:(id)sender {
     (void)sender;
     NSURL *url = [NSURL URLWithString:@"https://github.com/hyunseop827/menu-pulse/releases/latest"];
@@ -393,8 +428,11 @@
 
 - (void)resetDefaultsPressed:(id)sender {
     (void)sender;
+    NSString *informative = [NSString stringWithFormat:
+        @"%@\n\nOpen at login will also be turned on. macOS may require approval in System Settings.",
+        [MPSettingsStore defaultMetricSettingsSummary]];
     NSAlert *alert = [self alertWithMessage:@"Reset all settings?"
-                               informative:@"CPU/RAM: On, every 3 seconds\nTemperature: Off, every 30 seconds\nDisk: Off, every 5 minutes\nTemperature unit: Celsius\n\nOpen at login will also be turned on. macOS may require approval in System Settings."
+                               informative:informative
                                      action:@"Reset"
                                      cancel:@"Cancel"];
     if (self.alertRunner(alert) == NSAlertFirstButtonReturn) {

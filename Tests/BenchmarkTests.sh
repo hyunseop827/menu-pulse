@@ -19,10 +19,14 @@ trap 'exit 143' TERM
 fail() { echo "BenchmarkTests: $*" >&2; exit 1; }
 
 mkdir -p "$TEST_DIR/Temp" "$TEST_DIR/Home/Library/Preferences"
-PREFERENCES="$TEST_DIR/Home/Library/Preferences/dev.hyunseop.MenuPulse.plist"
-plutil -create xml1 "$PREFERENCES"
-plutil -insert cpuRefreshInterval -float 9 "$PREFERENCES"
-cp "$PREFERENCES" "$TEST_DIR/preferences.before.plist"
+# The measured app would remove this legacy key from its own defaults domain
+# if it ever used this home instead of its private benchmark home.
+PREFERENCES_DIR="$TEST_DIR/Home/Library/Preferences"
+for domain in dev.hyunseop.MenuPulse dev.hyunseop.MenuPulse.Benchmark; do
+  plutil -create xml1 "$PREFERENCES_DIR/$domain.plist"
+  plutil -insert cpuRefreshInterval -float 9 "$PREFERENCES_DIR/$domain.plist"
+done
+cp -R "$PREFERENCES_DIR" "$TEST_DIR/preferences.before"
 
 # Watch the real run so the test checks the identity of the executable that is
 # measured, as well as successful output and cleanup of its temporary files.
@@ -52,7 +56,7 @@ wait "$BENCHMARK_SCRIPT_PID" || { cat "$TEST_DIR/output.log" >&2; fail 'benchmar
 BENCHMARK_SCRIPT_PID=""
 grep -q '^CPU sample average:' "$TEST_DIR/output.log" || fail 'CPU results missing'
 grep -q '^RSS average:' "$TEST_DIR/output.log" || fail 'memory results missing'
-cmp -s "$PREFERENCES" "$TEST_DIR/preferences.before.plist" || fail 'preferences changed'
+diff -r "$PREFERENCES_DIR" "$TEST_DIR/preferences.before" >/dev/null || fail 'preferences changed'
 if kill -0 "$MEASURED_PID" 2>/dev/null; then fail 'measured process was left running'; fi
 REMAINING=("$TEST_DIR"/Temp/*)
 [[ "${#REMAINING[@]}" == 0 ]] || fail 'temporary build or preferences were left behind'

@@ -9,6 +9,7 @@ permissions:
 jobs:
   release:
     runs-on: macos-latest
+    timeout-minutes: 30
     concurrency:
       group: repository-release
       cancel-in-progress: false

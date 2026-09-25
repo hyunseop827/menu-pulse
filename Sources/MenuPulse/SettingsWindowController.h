@@ -17,6 +17,7 @@ typedef BOOL (^MPSettingsURLOpener)(NSURL *url);
 - (void)settingsWindowControllerDidRequestOpenLoginItems:(MPSettingsWindowController *)controller;
 - (void)settingsWindowControllerDidRequestResetDefaults:(MPSettingsWindowController *)controller;
 - (void)settingsWindowControllerDidRequestQuit:(MPSettingsWindowController *)controller;
+- (void)settingsWindowControllerDidCloseWindow:(MPSettingsWindowController *)controller;
 @end
 
 @interface MPSettingsWindowController : NSWindowController

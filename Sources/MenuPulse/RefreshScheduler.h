@@ -35,9 +35,7 @@ typedef void (^MPRefreshDueHandler)(MPRefreshMetric dueMetrics);
 @property(nonatomic) NSTimeInterval cpuRAMRefreshIntervalSeconds;
 @property(nonatomic) NSTimeInterval temperatureRefreshIntervalSeconds;
 @property(nonatomic) NSTimeInterval diskRefreshIntervalSeconds;
-@property(nonatomic, readonly) MPRefreshMetric pausedMetrics;
 @property(nonatomic, readonly, getter=isRunning) BOOL running;
-@property(nonatomic, readonly, getter=isTimerArmed) BOOL timerArmed;
 
 - (void)start;
 - (void)stop;
@@ -45,9 +43,6 @@ typedef void (^MPRefreshDueHandler)(MPRefreshMetric dueMetrics);
 /// Evaluates deadlines immediately, updates the last-sampled timestamps for due metrics,
 /// invokes the due handler, and rearms the one-shot timer when running.
 - (MPRefreshMetric)processDueMetrics;
-
-/// Records an explicit sample outside the normal due callback.
-- (void)markMetricsSampled:(MPRefreshMetric)metrics;
 
 /// Moves the next CPU deadline to one second from now. Call this after the CPU
 /// monitor consumes a due event only to establish its initial baseline.
@@ -61,15 +56,9 @@ typedef void (^MPRefreshDueHandler)(MPRefreshMetric dueMetrics);
 /// deadlines missed while the metric was paused.
 - (void)setMetric:(MPRefreshMetric)metric paused:(BOOL)paused;
 
-/// Prevents the selected metrics from becoming due before the supplied
-/// monotonic interval elapses. Deferrals survive metric disable/enable cycles.
-- (void)deferMetric:(MPRefreshMetric)metric forInterval:(NSTimeInterval)interval;
-
-- (MPRefreshMetric)dueMetricsAtCurrentTime;
-- (NSTimeInterval)nextDelayAtCurrentTime;
-- (NSTimeInterval)lastSampleTimeForMetric:(MPRefreshMetric)metric;
-
-+ (NSTimeInterval)leewayForDelay:(NSTimeInterval)delay;
+/// Prevents temperature from becoming due before the supplied monotonic
+/// interval elapses. The deferral survives metric disable/enable cycles.
+- (void)deferTemperatureForInterval:(NSTimeInterval)interval;
 
 @end
 

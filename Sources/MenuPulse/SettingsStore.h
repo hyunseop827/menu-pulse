@@ -3,13 +3,14 @@
 NS_ASSUME_NONNULL_BEGIN
 
 FOUNDATION_EXPORT const NSTimeInterval MPCPURAMRefreshIntervalDefault;
-FOUNDATION_EXPORT const NSTimeInterval MPCPURAMRefreshIntervalFast;
-FOUNDATION_EXPORT const NSTimeInterval MPCPURAMRefreshIntervalSlow;
 FOUNDATION_EXPORT const NSTimeInterval MPTemperatureRefreshIntervalDefault;
 FOUNDATION_EXPORT const NSTimeInterval MPDiskRefreshIntervalDefault;
 
 FOUNDATION_EXPORT NSString * const MPTemperatureUnitCelsius;
 FOUNDATION_EXPORT NSString * const MPTemperatureUnitFahrenheit;
+
+/// Describes an interval in whole seconds or minutes, such as "3 seconds".
+FOUNDATION_EXPORT NSString *MPIntervalDescription(NSTimeInterval interval);
 
 @interface MPSettingsStore : NSObject
 
@@ -32,7 +33,8 @@ FOUNDATION_EXPORT NSString * const MPTemperatureUnitFahrenheit;
 + (BOOL)isValidCPURAMRefreshInterval:(NSTimeInterval)interval;
 + (BOOL)isValidTemperatureRefreshInterval:(NSTimeInterval)interval;
 + (BOOL)isValidDiskRefreshInterval:(NSTimeInterval)interval;
-- (void)removeLegacyRefreshIntervalSettings;
+/// Lists the metric settings that resetMetricSettings restores, one per line.
++ (NSString *)defaultMetricSettingsSummary;
 - (void)resetMetricSettings;
 
 @end

@@ -1,7 +1,7 @@
-# v1.4.0
+# v1.5.0
 
-- Show the installed version and a link to the latest release in Settings.
-- Pause periodic monitoring while displays sleep and refresh readings when they wake.
-- Explain that Reset Defaults also enables Open at Login; quitting preserves the login setting.
-- Show temperature read failures and retry status in the menu bar tooltip.
-- Simplify development commands and isolate benchmarks from the installed app.
+- Fix TEMP getting stuck at 52°C on idle Apple Silicon Macs: constant calibration sensors no longer count as the hottest reading.
+- Report DISK usage and free space the way Finder does, counting purgeable space as available.
+- Stack any two metrics on separate lines, keep the menu bar text sharp on mixed displays, and keep its width steady while values load.
+- Close Settings with ⌘W or Esc, and pause monitoring while another user's session is active.
+- Settings reopens where you left it and uses less memory after it is closed.

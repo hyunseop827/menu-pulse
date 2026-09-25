@@ -9,7 +9,7 @@
 A compact CPU and RAM readout for your Mac's menu bar. Temperature and disk usage are optional.
 
 <p align="center">
-  <img src="menupulse-menubar.png" alt="Menu Pulse default CPU and RAM readout" width="136">
+  <img src="menupulse-menubar.png" alt="Menu Pulse default CPU and RAM readout" width="88">
 </p>
 
 ## Download
@@ -42,9 +42,15 @@ shasum -a 256 -c SHA256SUMS.txt
 | TEMP | Off | 1s, 3s, 10s, 30s, 60s — default 30s |
 | DISK | Off | 1m, 3m, 5m, 10m — default 5m |
 
-TEMP supports Celsius and Fahrenheit and shows the hottest sensor the app can read. Sensor availability varies by Mac and macOS version; a failed read shows `--` and is retried after five minutes. Hover over the menu bar item for TEMP status. DISK shows usage of the home volume.
+One or two metrics appear one per line. With three or four, CPU and RAM form the left column and TEMP and DISK the right.
 
-Settings shows the installed version and a link to the latest GitHub release. First launch asks about Open at Login once; you can change it in settings. **Reset Defaults restores the metric defaults and turns Open at Login on.** Reset and Quit require confirmation; quitting preserves your login setting.
+<p align="center">
+  <img src="menupulse-menubar-all.png" alt="Menu Pulse showing CPU, RAM, TEMP, and DISK" width="169">
+</p>
+
+TEMP supports Celsius and Fahrenheit and shows the hottest component sensor the app can read; battery and calibration sensors are ignored. Sensor availability varies by Mac and macOS version; a failed read shows `--` and is retried every five minutes. DISK shows usage of the home volume and, like Finder, counts purgeable space as available. Hover over the menu bar item for details such as free disk space and TEMP status.
+
+Click the menu bar item to open Settings, which shows the installed version and a link to the latest GitHub release. Close it with **⌘W** or **Esc**; it reopens where you left it. First launch asks about Open at Login once; you can change it in Settings. **Reset Defaults restores the metric defaults and turns Open at Login on.** Reset and Quit require confirmation; quitting preserves your login setting.
 
 <details>
 <summary>Settings screenshot</summary>
@@ -58,9 +64,9 @@ Settings shows the installed version and a link to the latest GitHub release. Fi
 ## Resource use and privacy
 
 - Native Objective-C/AppKit; no Electron, web view, chart, or Dock icon
-- One timer reads only enabled metrics; periodic reads pause while displays are asleep
+- One timer reads only enabled metrics; periodic reads pause while displays are asleep or another user's session is active
 - No background network requests, telemetry, crash-reporting SDK, history, or metric log; the release link opens in your browser when clicked
-- Stores only display choices, refresh intervals, temperature unit, and the one-time login prompt marker
+- Stores only display choices, refresh intervals, temperature unit, the Settings window and menu bar item positions, and the one-time login prompt marker
 
 Resource use depends on your Mac, macOS version, enabled metrics, and refresh intervals. The 1-second TEMP option performs the most sensor work and is best used for short checks. See [Benchmark](#benchmark) to measure a specific checkout with its test conditions recorded.
 

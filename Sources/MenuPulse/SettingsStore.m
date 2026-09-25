@@ -1,7 +1,5 @@
 #import "SettingsStore.h"
 
-#import <math.h>
-
 static NSString * const MPSettingShowCPU = @"showCPU";
 static NSString * const MPSettingShowRAM = @"showRAM";
 static NSString * const MPSettingShowTemperature = @"showTemperature";
@@ -21,13 +19,21 @@ static NSString * const MPLegacyTemperatureRefreshInterval = @"temperatureRefres
 static NSString * const MPLegacyDiskRefreshInterval = @"diskRefreshInterval";
 
 const NSTimeInterval MPCPURAMRefreshIntervalDefault = 3.0;
-const NSTimeInterval MPCPURAMRefreshIntervalFast = 1.0;
-const NSTimeInterval MPCPURAMRefreshIntervalSlow = 10.0;
 const NSTimeInterval MPTemperatureRefreshIntervalDefault = 30.0;
 const NSTimeInterval MPDiskRefreshIntervalDefault = 300.0;
 
 NSString * const MPTemperatureUnitCelsius = @"C";
 NSString * const MPTemperatureUnitFahrenheit = @"F";
+
+NSString *MPIntervalDescription(NSTimeInterval interval) {
+    NSInteger value = (NSInteger)llround(interval);
+    NSString *unit = @"second";
+    if (value >= 60 && value % 60 == 0) {
+        value /= 60;
+        unit = @"minute";
+    }
+    return [NSString stringWithFormat:@"%ld %@%@", (long)value, unit, value == 1 ? @"" : @"s"];
+}
 
 static BOOL MPIntervalIsIncludedIn(NSTimeInterval interval,
                                    NSArray<NSNumber *> *supportedIntervals) {
@@ -110,14 +116,9 @@ static BOOL MPIntervalIsIncludedIn(NSTimeInterval interval,
 
 - (NSString *)temperatureUnit {
     NSString *unit = [self.userDefaults stringForKey:MPSettingTemperatureUnit];
-    if ([unit isEqualToString:MPTemperatureUnitFahrenheit]) {
-        return MPTemperatureUnitFahrenheit;
-    }
-
-    if (![unit isEqualToString:MPTemperatureUnitCelsius]) {
-        [self.userDefaults setObject:MPTemperatureUnitCelsius forKey:MPSettingTemperatureUnit];
-    }
-    return MPTemperatureUnitCelsius;
+    return [unit isEqualToString:MPTemperatureUnitFahrenheit]
+        ? MPTemperatureUnitFahrenheit
+        : MPTemperatureUnitCelsius;
 }
 
 - (void)setTemperatureUnit:(NSString *)temperatureUnit {
@@ -129,11 +130,9 @@ static BOOL MPIntervalIsIncludedIn(NSTimeInterval interval,
 
 - (NSTimeInterval)cpuRAMRefreshIntervalSeconds {
     NSTimeInterval interval = [self.userDefaults doubleForKey:MPSettingCPURAMRefreshIntervalSeconds];
-    if (![self.class isValidCPURAMRefreshInterval:interval]) {
-        interval = MPCPURAMRefreshIntervalDefault;
-        [self.userDefaults setDouble:interval forKey:MPSettingCPURAMRefreshIntervalSeconds];
-    }
-    return interval;
+    return [self.class isValidCPURAMRefreshInterval:interval]
+        ? interval
+        : MPCPURAMRefreshIntervalDefault;
 }
 
 - (void)setCpuRAMRefreshIntervalSeconds:(NSTimeInterval)cpuRAMRefreshIntervalSeconds {
@@ -185,12 +184,9 @@ static BOOL MPIntervalIsIncludedIn(NSTimeInterval interval,
 - (NSTimeInterval)temperatureRefreshIntervalSeconds {
     NSTimeInterval interval =
         [self.userDefaults doubleForKey:MPSettingTemperatureRefreshIntervalSeconds];
-    if (![self.class isValidTemperatureRefreshInterval:interval]) {
-        interval = MPTemperatureRefreshIntervalDefault;
-        [self.userDefaults setDouble:interval
-                              forKey:MPSettingTemperatureRefreshIntervalSeconds];
-    }
-    return interval;
+    return [self.class isValidTemperatureRefreshInterval:interval]
+        ? interval
+        : MPTemperatureRefreshIntervalDefault;
 }
 
 - (void)setTemperatureRefreshIntervalSeconds:(NSTimeInterval)interval {
@@ -205,11 +201,9 @@ static BOOL MPIntervalIsIncludedIn(NSTimeInterval interval,
 - (NSTimeInterval)diskRefreshIntervalSeconds {
     NSTimeInterval interval =
         [self.userDefaults doubleForKey:MPSettingDiskRefreshIntervalSeconds];
-    if (![self.class isValidDiskRefreshInterval:interval]) {
-        interval = MPDiskRefreshIntervalDefault;
-        [self.userDefaults setDouble:interval forKey:MPSettingDiskRefreshIntervalSeconds];
-    }
-    return interval;
+    return [self.class isValidDiskRefreshInterval:interval]
+        ? interval
+        : MPDiskRefreshIntervalDefault;
 }
 
 - (void)setDiskRefreshIntervalSeconds:(NSTimeInterval)interval {
@@ -238,16 +232,45 @@ static BOOL MPIntervalIsIncludedIn(NSTimeInterval interval,
         MPLegacyDiskRefreshInterval,
     ];
     for (NSString *key in legacyKeys) {
-        [self.userDefaults removeObjectForKey:key];
+        if ([self.userDefaults objectForKey:key]) {
+            [self.userDefaults removeObjectForKey:key];
+        }
     }
 }
 
++ (NSString *)defaultMetricSettingsSummary {
+    NSDictionary<NSString *, id> *defaults = [self metricDefaults];
+    NSString *(^state)(NSString *) = ^NSString *(NSString *key) {
+        return [defaults[key] boolValue] ? @"On" : @"Off";
+    };
+    NSString *cpuRAM = [state(MPSettingShowCPU) isEqualToString:state(MPSettingShowRAM)]
+        ? [NSString stringWithFormat:@"CPU/RAM: %@", state(MPSettingShowCPU)]
+        : [NSString stringWithFormat:@"CPU: %@, RAM: %@",
+                                     state(MPSettingShowCPU),
+                                     state(MPSettingShowRAM)];
+    BOOL fahrenheit =
+        [defaults[MPSettingTemperatureUnit] isEqualToString:MPTemperatureUnitFahrenheit];
+    return [@[
+        [NSString stringWithFormat:@"%@, every %@",
+                                   cpuRAM,
+                                   MPIntervalDescription(MPCPURAMRefreshIntervalDefault)],
+        [NSString stringWithFormat:@"Temperature: %@, every %@",
+                                   state(MPSettingShowTemperature),
+                                   MPIntervalDescription(MPTemperatureRefreshIntervalDefault)],
+        [NSString stringWithFormat:@"Disk: %@, every %@",
+                                   state(MPSettingShowDisk),
+                                   MPIntervalDescription(MPDiskRefreshIntervalDefault)],
+        [NSString stringWithFormat:@"Temperature unit: %@",
+                                   fahrenheit ? @"Fahrenheit" : @"Celsius"],
+    ] componentsJoinedByString:@"\n"];
+}
+
 - (void)resetMetricSettings {
-    NSDictionary<NSString *, id> *defaults = [self.class metricDefaults];
-    [defaults enumerateKeysAndObjectsUsingBlock:^(NSString *key, id value, BOOL *stop) {
-        (void)stop;
-        [self.userDefaults setObject:value forKey:key];
-    }];
+    // Removing the keys lets the registered defaults apply again, including
+    // defaults changed by a later release.
+    for (NSString *key in [self.class metricDefaults]) {
+        [self.userDefaults removeObjectForKey:key];
+    }
     [self removeLegacyRefreshIntervalSettings];
 }
 

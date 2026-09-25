@@ -1,20 +1,7 @@
-#import "RefreshScheduler.h"
-#import "SettingsStore.h"
 #import "MemoryUserDefaults.h"
-
-#import <Foundation/Foundation.h>
-#import <math.h>
-
-static NSUInteger MPFailureCount = 0;
-
-static void MPAssert(BOOL condition, NSString *message) {
-    if (condition) {
-        return;
-    }
-
-    MPFailureCount += 1;
-    fprintf(stderr, "FAIL: %s\n", message.UTF8String);
-}
+#import "RefreshSchedulerTesting.h"
+#import "SettingsStore.h"
+#import "TestAssert.h"
 
 static void MPAssertInterval(NSTimeInterval actual,
                              NSTimeInterval expected,
@@ -34,12 +21,12 @@ static void MPAssertInterval(NSTimeInterval actual,
 
 @end
 
-static NSUserDefaults *MPMakeIsolatedDefaults(void) {
+static MPMemoryUserDefaults *MPMakeIsolatedDefaults(void) {
     return [[MPMemoryUserDefaults alloc] init];
 }
 
 static void MPTestSettingsDefaultsAndPersistence(void) {
-    NSUserDefaults *defaults = MPMakeIsolatedDefaults();
+    MPMemoryUserDefaults *defaults = MPMakeIsolatedDefaults();
     [defaults setDouble:9.0 forKey:@"cpuRefreshInterval"];
     [defaults setDouble:9.0 forKey:@"ramRefreshInterval"];
     [defaults setDouble:9.0 forKey:@"temperatureRefreshInterval"];
@@ -80,6 +67,9 @@ static void MPTestSettingsDefaultsAndPersistence(void) {
     for (NSString *key in legacyKeys) {
         MPAssert([defaults objectForKey:key] == nil, @"legacy refresh keys should be removed");
     }
+    MPAssert([defaults storedObjectForKey:@"showCPU"] == nil &&
+             [defaults storedObjectForKey:@"cpuRAMRefreshIntervalSeconds"] == nil,
+             @"reading default settings should not write them");
 
     store.showCPU = NO;
     store.showRAM = NO;
@@ -129,14 +119,14 @@ static void MPTestSettingsDefaultsAndPersistence(void) {
 }
 
 static void MPTestSettingsValidationAndReset(void) {
-    NSUserDefaults *defaults = MPMakeIsolatedDefaults();
+    MPMemoryUserDefaults *defaults = MPMakeIsolatedDefaults();
     MPSettingsStore *store = [[MPSettingsStore alloc] initWithUserDefaults:defaults];
 
     [defaults setDouble:2.0 forKey:@"cpuRAMRefreshIntervalSeconds"];
     MPAssertInterval(store.cpuRAMRefreshIntervalSeconds, 3.0,
                      @"an unsupported stored refresh should fall back to three seconds");
-    MPAssertInterval([defaults doubleForKey:@"cpuRAMRefreshIntervalSeconds"], 3.0,
-                     @"an unsupported stored refresh should be repaired");
+    MPAssertInterval([defaults doubleForKey:@"cpuRAMRefreshIntervalSeconds"], 2.0,
+                     @"reading an unsupported stored refresh should not write to defaults");
 
     store.cpuRAMRefreshIntervalSeconds = 99.0;
     MPAssertInterval(store.cpuRAMRefreshIntervalSeconds, 3.0,
@@ -152,8 +142,6 @@ static void MPTestSettingsValidationAndReset(void) {
     [defaults setDouble:-1.0 forKey:@"temperatureRefreshIntervalSeconds"];
     MPAssertInterval(store.temperatureRefreshIntervalSeconds, 30.0,
                      @"a negative stored temperature refresh should use its default");
-    MPAssertInterval([defaults doubleForKey:@"temperatureRefreshIntervalSeconds"], 30.0,
-                     @"a negative stored temperature refresh should be repaired");
 
     [defaults setDouble:NAN forKey:@"temperatureRefreshIntervalSeconds"];
     MPAssertInterval(store.temperatureRefreshIntervalSeconds, 30.0,
@@ -163,10 +151,8 @@ static void MPTestSettingsValidationAndReset(void) {
     [defaults setDouble:-300.0 forKey:@"diskRefreshIntervalSeconds"];
     MPAssertInterval(store.diskRefreshIntervalSeconds, 300.0,
                      @"a negative stored disk refresh should use its default");
-    MPAssertInterval([defaults doubleForKey:@"diskRefreshIntervalSeconds"], 300.0,
-                     @"a negative stored disk refresh should be repaired");
     MPAssertInterval(store.temperatureRefreshIntervalSeconds, 10.0,
-                     @"repairing disk should not alter a valid temperature interval");
+                     @"an invalid disk interval should not alter a valid temperature interval");
 
     [defaults setDouble:NAN forKey:@"diskRefreshIntervalSeconds"];
     MPAssertInterval(store.diskRefreshIntervalSeconds, 300.0,
@@ -182,6 +168,8 @@ static void MPTestSettingsValidationAndReset(void) {
     [defaults setObject:@"Kelvin" forKey:@"temperatureUnit"];
     MPAssert([store.temperatureUnit isEqualToString:MPTemperatureUnitCelsius],
              @"an unsupported unit should fall back to Celsius");
+    MPAssert([[defaults storedObjectForKey:@"temperatureUnit"] isEqual:@"Kelvin"],
+             @"reading an unsupported unit should not write to defaults");
 
     [defaults setBool:YES forKey:@"openAtLogin"];
     store.showCPU = NO;
@@ -211,6 +199,27 @@ static void MPTestSettingsValidationAndReset(void) {
              @"reset should not change login item preferences");
     MPAssert(store.hasCompletedOpenAtLoginPrompt,
              @"resetting metric settings should preserve the login prompt marker");
+    for (NSString *key in @[@"showCPU", @"showRAM", @"showTemperature", @"showDisk",
+                            @"temperatureUnit", @"cpuRAMRefreshIntervalSeconds",
+                            @"temperatureRefreshIntervalSeconds", @"diskRefreshIntervalSeconds"]) {
+        MPAssert([defaults storedObjectForKey:key] == nil,
+                 [NSString stringWithFormat:@"reset should remove '%@' so later defaults apply", key]);
+    }
+}
+
+static void MPTestIntervalDescriptionsAndDefaultSummary(void) {
+    MPAssert([MPIntervalDescription(1.0) isEqualToString:@"1 second"] &&
+             [MPIntervalDescription(3.0) isEqualToString:@"3 seconds"] &&
+             [MPIntervalDescription(60.0) isEqualToString:@"1 minute"] &&
+             [MPIntervalDescription(300.0) isEqualToString:@"5 minutes"] &&
+             [MPIntervalDescription(90.0) isEqualToString:@"90 seconds"],
+             @"intervals should be described in whole seconds or minutes");
+    MPAssert([[MPSettingsStore defaultMetricSettingsSummary] isEqualToString:
+        @"CPU/RAM: On, every 3 seconds\n"
+        @"Temperature: Off, every 30 seconds\n"
+        @"Disk: Off, every 5 minutes\n"
+        @"Temperature unit: Celsius"],
+             @"the defaults summary should list the values Reset restores");
 
 }
 
@@ -444,7 +453,7 @@ static void MPTestSchedulerTemperatureFailureDeferral(void) {
     [scheduler start];
 
     [scheduler setMetric:MPRefreshMetricTemperature paused:YES];
-    [scheduler deferMetric:MPRefreshMetricTemperature forInterval:300.0];
+    [scheduler deferTemperatureForInterval:300.0];
     [scheduler setMetric:MPRefreshMetricTemperature paused:NO];
     MPAssertInterval(scheduler.nextDelayAtCurrentTime, 300.0,
                      @"a failed temperature read should defer the scheduler for five minutes");
@@ -624,6 +633,30 @@ static void MPTestSchedulerLateCPUActivationRejoinsRAMCadence(void) {
     [scheduler stop];
 }
 
+static void MPTestSchedulerTimerFires(void) {
+    __block NSUInteger callbackCount = 0;
+    __block BOOL callbacksWereOnMainThread = YES;
+    MPRefreshScheduler *scheduler = [[MPRefreshScheduler alloc]
+        initWithDueHandler:^(MPRefreshMetric metrics) {
+            (void)metrics;
+            callbacksWereOnMainThread &= NSThread.isMainThread;
+            callbackCount += 1;
+        }];
+    scheduler.cpuRAMRefreshIntervalSeconds = 1.0;
+    scheduler.activeMetrics = MPRefreshMetricCPU;
+    [scheduler start];
+    MPAssert(callbackCount == 1, @"starting should sample immediately");
+
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:3.0];
+    while (callbackCount < 2 && deadline.timeIntervalSinceNow > 0) {
+        [NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode
+                              beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
+    }
+    MPAssert(callbackCount == 2 && callbacksWereOnMainThread,
+             @"the real dispatch timer should deliver the next sample on the main queue");
+    [scheduler stop];
+}
+
 static void MPTestSchedulerLeewayAndExplicitSamples(void) {
     MPAssertInterval([MPRefreshScheduler leewayForDelay:0.5], 0.1,
                      @"short timer leeway should have a 0.1-second floor");
@@ -637,7 +670,10 @@ static void MPTestSchedulerLeewayAndExplicitSamples(void) {
     NSMutableArray<NSNumber *> *callbacks = [NSMutableArray array];
     MPRefreshScheduler *scheduler = MPMakeScheduler(clock, callbacks);
     scheduler.activeMetrics = MPRefreshMetricTemperature;
-    [scheduler markMetricsSampled:MPRefreshMetricTemperature];
+    MPAssert([scheduler processDueMetrics] == MPRefreshMetricTemperature,
+             @"an explicit evaluation should sample a newly active metric");
+    MPAssert(!scheduler.isTimerArmed,
+             @"an explicit evaluation should not arm a stopped scheduler");
     MPAssert([scheduler dueMetricsAtCurrentTime] == MPRefreshMetricNone,
              @"an explicit sample should satisfy the current deadline");
     clock.time = 80.0;
@@ -652,6 +688,7 @@ int main(void) {
     @autoreleasepool {
         MPTestSettingsDefaultsAndPersistence();
         MPTestSettingsValidationAndReset();
+        MPTestIntervalDescriptionsAndDefaultSummary();
         MPTestSchedulerIntervals();
         MPTestSchedulerIntervalChanges();
         MPTestSchedulerConfigurableTemperatureAndDiskIntervals();
@@ -665,6 +702,7 @@ int main(void) {
         MPTestSchedulerLateRAMActivationPreservesCPUWarmUp();
         MPTestSchedulerLateCPUActivationRejoinsRAMCadence();
         MPTestSchedulerLeewayAndExplicitSamples();
+        MPTestSchedulerTimerFires();
 
         if (MPFailureCount > 0) {
             fprintf(stderr, "%lu settings/scheduler test(s) failed\n",

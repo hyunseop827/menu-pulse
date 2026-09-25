@@ -1,7 +1,6 @@
 #import "Monitors.h"
 
 #import <mach/mach.h>
-#import <mach/mach_host.h>
 
 typedef struct {
     uint32_t user;
@@ -14,6 +13,13 @@ uint64_t MPUnsignedTickDelta(uint32_t current, uint32_t previous) {
     // host_cpu_load_info exposes 32-bit counters. Unsigned subtraction keeps
     // the elapsed ticks correct when a counter wraps through UINT32_MAX.
     return (uint64_t)(uint32_t)(current - previous);
+}
+
+NSNumber *MPPercentOfTotal(double used, double total) {
+    if (!isfinite(used) || !isfinite(total) || total <= 0.0) {
+        return nil;
+    }
+    return @(fmax(0.0, fmin(100.0, used / total * 100.0)));
 }
 
 @interface MPCPUMonitor ()
@@ -65,19 +71,13 @@ uint64_t MPUnsignedTickDelta(uint32_t current, uint32_t previous) {
     uint64_t idle = MPUnsignedTickDelta(ticks.idle, self.previousTicks.idle);
     uint64_t nice = MPUnsignedTickDelta(ticks.nice, self.previousTicks.nice);
     uint64_t totalTicks = user + system + idle + nice;
-    uint64_t activeTicks = totalTicks - idle;
     self.previousTicks = ticks;
 
-    if (totalTicks == 0) {
-        return nil;
-    }
-
-    return @(((double)activeTicks / (double)totalTicks) * 100.0);
+    return MPPercentOfTotal((double)(totalTicks - idle), (double)totalTicks);
 }
 
 - (void)reset {
     self.hasPreviousTicks = NO;
-    self.previousTicks = (MPTicks){0};
 }
 
 @end
@@ -111,13 +111,7 @@ uint64_t MPUnsignedTickDelta(uint32_t current, uint32_t previous) {
     uint64_t compressedPages = (uint64_t)stats.compressor_page_count;
     uint64_t used = (appPages + wiredPages + compressedPages) * pageSize;
 
-    if (total == 0) {
-        return nil;
-    }
-
-    double percent = (double)used / (double)total * 100.0;
-    percent = fmax(0.0, fmin(100.0, percent));
-    return @(percent);
+    return MPPercentOfTotal((double)used, (double)total);
 }
 
 @end
@@ -129,26 +123,30 @@ uint64_t MPUnsignedTickDelta(uint32_t current, uint32_t previous) {
         *availableBytes = 0;
     }
 
-    NSError *error = nil;
-    NSDictionary<NSFileAttributeKey, id> *attributes =
-        [[NSFileManager defaultManager] attributesOfFileSystemForPath:path error:&error];
-
-    NSNumber *totalNumber = attributes[NSFileSystemSize];
-    NSNumber *freeNumber = attributes[NSFileSystemFreeSize];
-    double total = totalNumber.doubleValue;
-    double free = freeNumber.doubleValue;
-
-    if (error || total <= 0) {
+    // Important-usage capacity includes purgeable space, matching the
+    // available space shown by Finder and System Settings. Some volumes, such
+    // as nobrowse mounts, report it as 0, so the plain free space is a floor.
+    NSURL *url = [NSURL fileURLWithPath:path];
+    NSDictionary<NSURLResourceKey, id> *values = [url resourceValuesForKeys:@[
+        NSURLVolumeTotalCapacityKey,
+        NSURLVolumeAvailableCapacityKey,
+        NSURLVolumeAvailableCapacityForImportantUsageKey,
+    ] error:NULL];
+    NSNumber *totalNumber = values[NSURLVolumeTotalCapacityKey];
+    NSNumber *freeNumber = values[NSURLVolumeAvailableCapacityKey];
+    NSNumber *importantNumber = values[NSURLVolumeAvailableCapacityForImportantUsageKey];
+    if (!totalNumber || (!freeNumber && !importantNumber)) {
         return nil;
     }
 
-    if (availableBytes) {
-        *availableBytes = free > 0 ? (uint64_t)free : 0;
+    double total = totalNumber.doubleValue;
+    double available = fmax(freeNumber.doubleValue, importantNumber.doubleValue);
+    available = fmax(0.0, fmin(available, total));
+    NSNumber *percent = MPPercentOfTotal(total - available, total);
+    if (percent && availableBytes) {
+        *availableBytes = (uint64_t)available;
     }
-
-    double percent = (total - free) / total * 100.0;
-    percent = fmax(0.0, fmin(100.0, percent));
-    return @(percent);
+    return percent;
 }
 
 @end

@@ -1,5 +1,4 @@
 #import <Foundation/Foundation.h>
-#import <math.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -7,18 +6,14 @@ typedef void (^MPTemperatureCompletion)(NSNumber *_Nullable temperatureCelsius);
 
 FOUNDATION_EXPORT const NSTimeInterval MPTemperatureFailureRetryInterval;
 
-NS_INLINE BOOL MPTemperatureRetryAllowedForInterval(
-    NSTimeInterval now,
-    NSTimeInterval lastFailureTime,
-    NSTimeInterval retryInterval
-) {
-    return isnan(lastFailureTime) || now - lastFailureTime >= retryInterval;
-}
-
 FOUNDATION_EXPORT BOOL MPTemperatureRetryAllowed(
     NSTimeInterval now,
     NSTimeInterval lastFailureTime
 );
+
+/// Returns YES for HID sensors that do not report a live component
+/// temperature and must not be considered for the hottest reading.
+FOUNDATION_EXPORT BOOL MPTemperatureSensorIsExcluded(NSString *product);
 
 @interface MPTemperatureReader : NSObject
 - (void)temperatureCelsiusAsync:(MPTemperatureCompletion)completion;

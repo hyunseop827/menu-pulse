@@ -27,8 +27,9 @@ app:
 	@set -euo pipefail; \
 	[[ "$(ARCH)" == arm64 ]] || { echo 'Menu Pulse supports arm64 only' >&2; exit 1; }; \
 	app="$(BUILD_DIR)/Menu Pulse.app"; \
+	rm -rf -- "$$app"; \
 	mkdir -p "$$app/Contents/MacOS" "$$app/Contents/Resources"; \
-	xcrun clang $(OBJC_FLAGS) -arch "$(ARCH)" -Os -DNDEBUG \
+	xcrun clang $(OBJC_FLAGS) -arch "$(ARCH)" -Oz -DNDEBUG \
 	  Sources/MenuPulse/*.m -o "$$app/Contents/MacOS/MenuPulse" \
 	  $(FRAMEWORKS) -Wl,-dead_strip; \
 	strip -x "$$app/Contents/MacOS/MenuPulse"; \
@@ -46,11 +47,11 @@ test:
 	trap 'rm -r -- "$$test_dir"' EXIT; \
 	trap 'exit 130' INT; trap 'exit 143' TERM; \
 	mkdir -p "$$test_dir/Home/Library/Preferences"; \
-	xcrun clang $(OBJC_FLAGS) -arch "$(TEST_ARCH)" \
-	  Tests/MonitorTests.m Sources/MenuPulse/Monitors.m \
-	  -o "$$test_dir/MonitorTests" -framework Foundation; \
+	xcrun clang $(OBJC_FLAGS) -I Tests -arch "$(TEST_ARCH)" \
+	  Tests/MonitorTests.m Sources/MenuPulse/Monitors.m Sources/MenuPulse/TemperatureReader.m \
+	  -o "$$test_dir/MonitorTests" -framework Foundation -framework IOKit; \
 	CFFIXED_USER_HOME="$$test_dir/Home" "$$test_dir/MonitorTests"; \
-	xcrun clang $(OBJC_FLAGS) -arch "$(TEST_ARCH)" \
+	xcrun clang $(OBJC_FLAGS) -I Tests -arch "$(TEST_ARCH)" \
 	  Tests/SettingsSchedulerTests.m Tests/MemoryUserDefaults.m \
 	  Sources/MenuPulse/SettingsStore.m Sources/MenuPulse/RefreshScheduler.m \
 	  -o "$$test_dir/SettingsSchedulerTests" -framework Foundation; \
@@ -59,7 +60,7 @@ test:
 	for source in Sources/MenuPulse/*.m; do \
 	  [[ "$$source" == Sources/MenuPulse/main.m ]] || ui_sources+=("$$source"); \
 	done; \
-	xcrun clang $(OBJC_FLAGS) -arch "$(TEST_ARCH)" \
+	xcrun clang $(OBJC_FLAGS) -I Tests -arch "$(TEST_ARCH)" \
 	  Tests/MenuPulseUITests.m Tests/MemoryUserDefaults.m "$${ui_sources[@]}" \
 	  -o "$$test_dir/MenuPulseUITests" $(FRAMEWORKS); \
 	CFFIXED_USER_HOME="$$test_dir/Home" "$$test_dir/MenuPulseUITests"; \
@@ -67,16 +68,21 @@ test:
 
 analyze:
 	@set -euo pipefail; \
-	for source in Sources/MenuPulse/*.m; do \
-	  xcrun clang --analyze $(OBJC_FLAGS) -arch "$(ARCH)" \
-	    -Xanalyzer -analyzer-output=text "$$source" -o /dev/null; \
-	done; \
+	printf '%s\0' Sources/MenuPulse/*.m | \
+	  xargs -0 -n 1 -P "$$(sysctl -n hw.ncpu)" \
+	    xcrun clang --analyze $(OBJC_FLAGS) -arch "$(ARCH)" \
+	      -Xanalyzer -analyzer-output=text -Xanalyzer -analyzer-werror -o /dev/null; \
 	echo 'Clang static analysis passed.'
 
 check:
 	@set -euo pipefail; \
 	for script in Scripts/*.sh Tests/*.sh; do bash -n "$$script"; done; \
-	plutil -lint Packaging/Info.plist
+	plutil -lint Packaging/Info.plist; \
+	version="$$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Packaging/Info.plist)"; \
+	[[ "$$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' Packaging/Info.plist)" == "$$version" ]] || \
+	  { echo 'CFBundleVersion must match CFBundleShortVersionString.' >&2; exit 1; }; \
+	[[ "$$(head -n 1 .github/release-notes.md)" == "# v$$version" ]] || \
+	  { echo "The release notes must begin with '# v$$version'." >&2; exit 1; }
 	@$(MAKE) analyze
 	@$(MAKE) test
 	@$(MAKE) verify-app

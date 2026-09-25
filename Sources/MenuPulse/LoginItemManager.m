@@ -7,16 +7,9 @@ static NSString * const MPLegacyLoginItemLabel = @"dev.hyunseop.MenuPulse";
 
 @interface MPLoginItemManager ()
 @property(nonatomic, strong) dispatch_queue_t operationQueue;
-- (BOOL)performSetEnabled:(BOOL)enabled;
-- (BOOL)performUnregisterModernLoginItem;
-- (BOOL)waitForModernLoginItemToBecomeUnregistered;
 @end
 
 @implementation MPLoginItemManager
-
-- (instancetype)init {
-    return [self initWithLegacyMigrationEnabled:YES];
-}
 
 - (instancetype)initWithLegacyMigrationEnabled:(BOOL)legacyMigrationEnabled {
     self = [super init];
@@ -32,21 +25,26 @@ static NSString * const MPLegacyLoginItemLabel = @"dev.hyunseop.MenuPulse";
     return self;
 }
 
-- (BOOL)isEnabled {
-    return SMAppService.mainAppService.status == SMAppServiceStatusEnabled;
-}
-
-- (BOOL)requiresApproval {
-    return SMAppService.mainAppService.status == SMAppServiceStatusRequiresApproval;
+- (MPLoginItemStatus)status {
+    switch (SMAppService.mainAppService.status) {
+        case SMAppServiceStatusEnabled:
+            return MPLoginItemStatusEnabled;
+        case SMAppServiceStatusRequiresApproval:
+            return MPLoginItemStatusRequiresApproval;
+        default:
+            return MPLoginItemStatusDisabled;
+    }
 }
 
 - (void)setEnabled:(BOOL)enabled completion:(MPLoginItemUpdateCompletion)completion {
     MPLoginItemUpdateCompletion copiedCompletion = [completion copy];
     dispatch_async(self.operationQueue, ^{
         BOOL success = [self performSetEnabled:enabled];
-        dispatch_async(dispatch_get_main_queue(), ^{
+        CFRunLoopRef mainRunLoop = CFRunLoopGetMain();
+        CFRunLoopPerformBlock(mainRunLoop, kCFRunLoopCommonModes, ^{
             copiedCompletion(success);
         });
+        CFRunLoopWakeUp(mainRunLoop);
     });
 }
 
@@ -58,8 +56,7 @@ static NSString * const MPLegacyLoginItemLabel = @"dev.hyunseop.MenuPulse";
             return YES;
         }
 
-        NSError *error = nil;
-        if (![service registerAndReturnError:&error]) {
+        if (![service registerAndReturnError:NULL]) {
             return NO;
         }
 
@@ -82,8 +79,7 @@ static NSString * const MPLegacyLoginItemLabel = @"dev.hyunseop.MenuPulse";
         return YES;
     }
 
-    NSError *error = nil;
-    if (![service unregisterAndReturnError:&error]) {
+    if (![service unregisterAndReturnError:NULL]) {
         return NO;
     }
     return [self waitForModernLoginItemToBecomeUnregistered];
@@ -122,8 +118,7 @@ static NSString * const MPLegacyLoginItemLabel = @"dev.hyunseop.MenuPulse";
 
     SMAppService *service = SMAppService.mainAppService;
     if (service.status == SMAppServiceStatusNotRegistered) {
-        NSError *error = nil;
-        [service registerAndReturnError:&error];
+        [service registerAndReturnError:NULL];
     }
 
     if (service.status == SMAppServiceStatusEnabled) {
@@ -157,22 +152,32 @@ static NSString * const MPLegacyLoginItemLabel = @"dev.hyunseop.MenuPulse";
         return YES;
     }
 
+    // Delete the plist first so an interrupted migration cannot leave the
+    // legacy agent behind for the next login.
+    if (![fileManager removeItemAtURL:legacyURL error:NULL]) {
+        return NO;
+    }
+
+    // When the legacy agent launched this process, booting it out would
+    // terminate Menu Pulse itself. Its definition is unloaded at logout, and
+    // without the plist it does not return.
+    NSString *serviceName = NSProcessInfo.processInfo.environment[@"XPC_SERVICE_NAME"];
+    if ([serviceName isEqualToString:MPLegacyLoginItemLabel]) {
+        return YES;
+    }
+
     NSTask *task = [[NSTask alloc] init];
     task.executableURL = [NSURL fileURLWithPath:@"/bin/launchctl"];
     task.arguments = @[
         @"bootout",
-        [NSString stringWithFormat:@"gui/%d", getuid()],
-        legacyPath,
+        [NSString stringWithFormat:@"gui/%d/%@", getuid(), MPLegacyLoginItemLabel],
     ];
-    task.standardOutput = [NSPipe pipe];
-    task.standardError = [NSPipe pipe];
-
-    NSError *error = nil;
-    if ([task launchAndReturnError:&error]) {
+    task.standardOutput = [NSFileHandle fileHandleWithNullDevice];
+    task.standardError = [NSFileHandle fileHandleWithNullDevice];
+    if ([task launchAndReturnError:NULL]) {
         [task waitUntilExit];
     }
-
-    return [fileManager removeItemAtURL:legacyURL error:&error];
+    return YES;
 }
 
 - (NSURL *)legacyLoginItemURL {

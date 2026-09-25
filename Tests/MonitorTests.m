@@ -1,21 +1,8 @@
 #import "Monitors.h"
 #import "TemperatureReader.h"
+#import "TestAssert.h"
 
-#import <Foundation/Foundation.h>
 #import <mach/mach.h>
-
-extern uint64_t MPUnsignedTickDelta(uint32_t current, uint32_t previous);
-
-static NSUInteger MPFailureCount = 0;
-
-static void MPAssert(BOOL condition, NSString *message) {
-    if (condition) {
-        return;
-    }
-
-    MPFailureCount += 1;
-    fprintf(stderr, "FAIL: %s\n", message.UTF8String);
-}
 
 static void MPTestHostPortReferences(void) {
     mach_port_t host = mach_host_self();
@@ -66,6 +53,19 @@ static void MPTestCPUTickDelta(void) {
              @"CPU tick delta should handle the UINT32_MAX to zero boundary");
 }
 
+static void MPTestPercentCalculation(void) {
+    MPAssert([MPPercentOfTotal(25.0, 100.0) isEqualToNumber:@25.0],
+             @"usage should be the used share of the total");
+    MPAssert([MPPercentOfTotal(3.0, 4.0) isEqualToNumber:@75.0],
+             @"usage should not be rounded before display");
+    MPAssert([MPPercentOfTotal(150.0, 100.0) isEqualToNumber:@100.0] &&
+             [MPPercentOfTotal(-5.0, 100.0) isEqualToNumber:@0.0],
+             @"usage should be clamped to the zero to one hundred percent range");
+    MPAssert(MPPercentOfTotal(1.0, 0.0) == nil && MPPercentOfTotal(1.0, -1.0) == nil &&
+             MPPercentOfTotal(NAN, 100.0) == nil && MPPercentOfTotal(1.0, INFINITY) == nil,
+             @"an unusable total should not report usage");
+}
+
 static void MPTestMemoryRange(void) {
     NSNumber *usage = [MPMemoryMonitor usagePercent];
     MPAssert(usage != nil, @"memory usage should be available");
@@ -91,14 +91,29 @@ static void MPTestDiskSnapshot(void) {
 }
 
 static void MPTestTemperatureCooldownCalculation(void) {
-    MPAssert(MPTemperatureRetryAllowedForInterval(100.0, NAN, 300.0),
+    MPAssert(MPTemperatureFailureRetryInterval == 300.0,
+             @"temperature failures should use a five-minute cooldown");
+    MPAssert(MPTemperatureRetryAllowed(100.0, NAN),
              @"temperature should retry when there is no prior failure");
-    MPAssert(!MPTemperatureRetryAllowedForInterval(399.999, 100.0, 300.0),
+    MPAssert(!MPTemperatureRetryAllowed(399.999, 100.0),
              @"temperature should remain in cooldown before the boundary");
-    MPAssert(MPTemperatureRetryAllowedForInterval(400.0, 100.0, 300.0),
+    MPAssert(MPTemperatureRetryAllowed(400.0, 100.0),
              @"temperature should retry at the cooldown boundary");
-    MPAssert(!MPTemperatureRetryAllowedForInterval(99.0, 100.0, 300.0),
+    MPAssert(!MPTemperatureRetryAllowed(99.0, 100.0),
              @"a regressed clock should not bypass the temperature cooldown");
+}
+
+static void MPTestTemperatureSensorFilter(void) {
+    MPAssert(MPTemperatureSensorIsExcluded(@"gas gauge battery"),
+             @"battery gauges should not count as component temperatures");
+    MPAssert(MPTemperatureSensorIsExcluded(@"PMU tcal") &&
+             MPTemperatureSensorIsExcluded(@"PMU2 tcal"),
+             @"constant PMU calibration channels should not set a temperature floor");
+    for (NSString *product in @[@"PMU tdie1", @"PMU2 tdie8", @"pACC MTR Temp Sensor2",
+                                @"PMGR SOC Die Temp Sensor0", @"NAND CH0 temp", @""]) {
+        MPAssert(!MPTemperatureSensorIsExcluded(product),
+                 [NSString stringWithFormat:@"'%@' should remain a candidate sensor", product]);
+    }
 }
 
 int main(void) {
@@ -106,9 +121,11 @@ int main(void) {
         MPTestHostPortReferences();
         MPTestCPUMonitorReset();
         MPTestCPUTickDelta();
+        MPTestPercentCalculation();
         MPTestMemoryRange();
         MPTestDiskSnapshot();
         MPTestTemperatureCooldownCalculation();
+        MPTestTemperatureSensorFilter();
 
         if (MPFailureCount > 0) {
             fprintf(stderr, "%lu monitor test(s) failed\n", (unsigned long)MPFailureCount);
