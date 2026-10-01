@@ -13,8 +13,9 @@ app is put together.
 
 - `Sources/MenuPulse/`: the app. `MenuPulse.m` coordinates everything;
   `RefreshScheduler`, `Monitors`, `TemperatureReader`, `SettingsStore`,
-  `SettingsWindowController`, and `LoginItemManager` each own one concern.
-- `Tests/`: three Objective-C test executables and `BenchmarkTests.sh`.
+  `SettingsWindowController`, `LoginItemManager`, and `Updater` each own one
+  concern.
+- `Tests/`: four Objective-C test executables and `BenchmarkTests.sh`.
 - `Scripts/benchmark.sh`: the only script; it builds and measures a separate copy.
 - `Packaging/`: app bundle inputs only (`Info.plist`, `AppIcon.icns`).
 - `docs/`: architecture and AI-development notes; `docs/images/` holds README images.
@@ -25,13 +26,18 @@ app is put together.
 
 - `make app` builds `build/release/Menu Pulse.app`; `make check` runs script
   syntax checks, the version and release-notes check, static analysis, all
-  tests, and the app architecture and signature check. `make dmg` packages it.
+  tests, and the app architecture and signature check. `make dmg` packages it
+  as `MenuPulse.dmg` and `MenuPulse.zip` and lists both in `SHA256SUMS.txt`.
+  The in-app updater installs the ZIP from the release tagged `vX.Y.Z`, so keep
+  those asset names and the `Menu Pulse.app` name inside the ZIP.
 - Compiler flags are strict: ARC, `-Wall -Wextra -Werror`,
   `-Wnullable-to-nonnull-conversion`, and a macOS 13.0 deployment target. The app
   builds for arm64 only, links only system frameworks, and must not need the
   Swift runtime.
-- The `Makefile` lists the sources of `MonitorTests` and `SettingsSchedulerTests`
-  explicitly. `MenuPulseUITests` compiles every source except `main.m` and embeds
+- The `Makefile` lists the sources of `MonitorTests`, `SettingsSchedulerTests`,
+  and `UpdaterTests` explicitly. `UpdaterTests` builds signed test apps, zips
+  them, and installs them from `file://` URLs, so it needs no network.
+  `MenuPulseUITests` compiles every source except `main.m` and embeds
   `Tests/MenuPulseUITests-Info.plist`, so its version label reads 9.8.7. Update
   the `Makefile` when a test needs another source file.
 - `CFFIXED_USER_HOME` changes the home folder the app sees but not where
@@ -57,7 +63,10 @@ installed app's preferences and login item. To try a build, follow
 - Afterwards run `defaults delete dev.hyunseop.MenuPulse.<Suffix>`.
 
 Do not install the app, change its login item, or quit the user's running copy
-unless the user asks.
+unless the user asks. Do not test Check for Updates on the installed copy: it
+replaces the app in place. Test `MPUpdater` with its designated initializer,
+local `file://` URLs, and an app under a temporary folder with a suffixed
+bundle identifier.
 
 ## Code and documentation conventions
 

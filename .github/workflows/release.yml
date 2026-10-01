@@ -140,7 +140,8 @@ jobs:
           fi
           RELEASE_IS_DRAFT="$(gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft')"
           if [[ "$RELEASE_IS_DRAFT" == "true" ]]; then
-            gh release upload "$RELEASE_TAG" dist/MenuPulse.dmg dist/SHA256SUMS.txt --clobber
+            gh release upload "$RELEASE_TAG" \
+              dist/MenuPulse.dmg dist/MenuPulse.zip dist/SHA256SUMS.txt --clobber
             gh release edit "$RELEASE_TAG" --draft=false --prerelease=false
           elif [[ "$RELEASE_IS_DRAFT" != "false" ]]; then
             echo 'Could not determine whether the release is a draft.' >&2
@@ -159,6 +160,7 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --dir "$VERIFY_DIR" \
             --pattern MenuPulse.dmg \
+            --pattern MenuPulse.zip \
             --pattern SHA256SUMS.txt
           cd "$VERIFY_DIR"
           shasum -a 256 -c SHA256SUMS.txt

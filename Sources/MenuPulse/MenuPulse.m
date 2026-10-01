@@ -6,6 +6,7 @@
 #import "SettingsStore.h"
 #import "SettingsWindowController.h"
 #import "TemperatureReader.h"
+#import "Updater.h"
 
 #import <CoreGraphics/CoreGraphics.h>
 
@@ -16,6 +17,8 @@
 @property(nonatomic, strong) MPRefreshScheduler *refreshScheduler;
 @property(nonatomic, strong) MPCPUMonitor *cpuMonitor;
 @property(nonatomic, strong, nullable) MPTemperatureReader *temperatureReader;
+@property(nonatomic, strong) MPUpdater *updater;
+@property(nonatomic) MPUpdateActivity updateActivity;
 @property(nonatomic, strong, nullable) NSNumber *cachedCPU;
 @property(nonatomic, strong, nullable) NSNumber *cachedRAM;
 @property(nonatomic, strong, nullable) NSNumber *cachedTemperature;
@@ -47,6 +50,7 @@
             initWithLegacyMigrationEnabled:loginItemMigrationEnabled];
         _settingsStore = [[MPSettingsStore alloc] init];
         _cpuMonitor = [[MPCPUMonitor alloc] init];
+        _updater = [[MPUpdater alloc] init];
         _lastRenderedRows = @[];
         [_statusItem.button setAccessibilityLabel:@"Menu Pulse"];
         [_statusItem.button setAccessibilityHelp:@"Opens Menu Pulse settings."];
@@ -104,6 +108,7 @@
         self.settingsWindowController = [[MPSettingsWindowController alloc]
             initWithSettingsStore:self.settingsStore
                           delegate:self];
+        self.settingsWindowController.updateActivity = self.updateActivity;
     }
     return self.settingsWindowController;
 }
@@ -150,6 +155,15 @@
     MPSettingsWindowController *controller = [self activeSettingsWindowController];
     [self refreshLoginStateFromSystem];
     [controller showSettingsWindow];
+}
+
+- (void)showSettingsAfterLaunch {
+    __weak typeof(self) weakSelf = self;
+    CFRunLoopRef mainRunLoop = CFRunLoopGetMain();
+    CFRunLoopPerformBlock(mainRunLoop, kCFRunLoopDefaultMode, ^{
+        [weakSelf showSettings];
+    });
+    CFRunLoopWakeUp(mainRunLoop);
 }
 
 - (void)scheduleOpenAtLoginPrompt {
@@ -261,6 +275,71 @@
     (void)controller;
     [self.refreshScheduler stop];
     [NSApp terminate:nil];
+}
+
+- (void)settingsWindowControllerDidRequestUpdateCheck:(MPSettingsWindowController *)controller {
+    (void)controller;
+    if (self.updateActivity != MPUpdateActivityIdle) {
+        return;
+    }
+    self.updateActivity = MPUpdateActivityChecking;
+    __weak typeof(self) weakSelf = self;
+    [self.updater fetchLatestVersion:^(NSString *latestVersion, NSError *error) {
+        [weakSelf handleLatestVersion:latestVersion error:error];
+    }];
+}
+
+- (void)handleLatestVersion:(nullable NSString *)latestVersion error:(nullable NSError *)error {
+    self.updateActivity = MPUpdateActivityIdle;
+    MPSettingsWindowController *controller = [self activeSettingsWindowController];
+    [NSApp activateIgnoringOtherApps:YES];
+    NSString *version = latestVersion;
+    NSString *currentVersion = self.updater.currentVersion;
+    if (!version) {
+        [controller showUpdateCheckFailedAlertWithError:error];
+    } else if (MPCompareVersions(version, currentVersion) != NSOrderedDescending) {
+        [controller showUpToDateAlertWithVersion:currentVersion];
+    } else if (!self.updater.canReplaceApp) {
+        [controller showManualUpdateAlertWithVersion:version];
+    } else if ([controller runUpdatePromptWithVersion:version currentVersion:currentVersion]) {
+        [self installUpdateWithVersion:version];
+    }
+    [self releaseSettingsWindowControllerIfHidden];
+}
+
+- (void)installUpdateWithVersion:(NSString *)version {
+    self.updateActivity = MPUpdateActivityInstalling;
+    __weak typeof(self) weakSelf = self;
+    [self.updater installVersion:version completion:^(NSError *installError) {
+        MPMenuPulse *strongSelf = weakSelf;
+        if (!strongSelf) {
+            return;
+        }
+        if (installError) {
+            strongSelf.updateActivity = MPUpdateActivityIdle;
+            [[strongSelf activeSettingsWindowController]
+                showUpdateFailedAlertWithError:installError version:version];
+            [strongSelf releaseSettingsWindowControllerIfHidden];
+            return;
+        }
+        [strongSelf.updater relaunch:^(NSError *relaunchError) {
+            MPMenuPulse *relaunchingSelf = weakSelf;
+            if (!relaunchError) {
+                [relaunchingSelf.refreshScheduler stop];
+                [NSApp terminate:nil];
+                return;
+            }
+            relaunchingSelf.updateActivity = MPUpdateActivityIdle;
+            [[relaunchingSelf activeSettingsWindowController]
+                showRelaunchFailedAlertWithVersion:version];
+            [relaunchingSelf releaseSettingsWindowControllerIfHidden];
+        }];
+    }];
+}
+
+- (void)setUpdateActivity:(MPUpdateActivity)updateActivity {
+    _updateActivity = updateActivity;
+    self.settingsWindowController.updateActivity = updateActivity;
 }
 
 - (void)settingsWindowControllerDidCloseWindow:(MPSettingsWindowController *)controller {

@@ -8,6 +8,12 @@ NS_ASSUME_NONNULL_BEGIN
 typedef NSModalResponse (^MPSettingsAlertRunner)(NSAlert *alert);
 typedef BOOL (^MPSettingsURLOpener)(NSURL *url);
 
+typedef NS_ENUM(NSInteger, MPUpdateActivity) {
+    MPUpdateActivityIdle,
+    MPUpdateActivityChecking,
+    MPUpdateActivityInstalling,
+};
+
 @protocol MPSettingsWindowControllerDelegate <NSObject>
 - (void)settingsWindowControllerDidChangeMetrics:(MPSettingsWindowController *)controller;
 - (void)settingsWindowControllerDidChangeTemperatureUnit:(MPSettingsWindowController *)controller;
@@ -17,6 +23,7 @@ typedef BOOL (^MPSettingsURLOpener)(NSURL *url);
 - (void)settingsWindowControllerDidRequestOpenLoginItems:(MPSettingsWindowController *)controller;
 - (void)settingsWindowControllerDidRequestResetDefaults:(MPSettingsWindowController *)controller;
 - (void)settingsWindowControllerDidRequestQuit:(MPSettingsWindowController *)controller;
+- (void)settingsWindowControllerDidRequestUpdateCheck:(MPSettingsWindowController *)controller;
 - (void)settingsWindowControllerDidCloseWindow:(MPSettingsWindowController *)controller;
 @end
 
@@ -31,6 +38,8 @@ typedef BOOL (^MPSettingsURLOpener)(NSURL *url);
 
 @property(nonatomic, weak) id<MPSettingsWindowControllerDelegate> delegate;
 @property(nonatomic) BOOL loginEnabled;
+/// Disables Check for Updates and shows progress in its title.
+@property(nonatomic) MPUpdateActivity updateActivity;
 @property(nonatomic, copy) MPSettingsAlertRunner alertRunner;
 @property(nonatomic, copy) MPSettingsURLOpener urlOpener;
 
@@ -41,6 +50,14 @@ typedef BOOL (^MPSettingsURLOpener)(NSURL *url);
 /// Returns YES only when the user chooses Enable.
 - (BOOL)runOpenAtLoginPrompt;
 - (void)showLoginApprovalAlert;
+
+- (void)showUpToDateAlertWithVersion:(NSString *)version;
+/// Returns YES only when the user chooses Update.
+- (BOOL)runUpdatePromptWithVersion:(NSString *)version currentVersion:(NSString *)currentVersion;
+- (void)showManualUpdateAlertWithVersion:(NSString *)version;
+- (void)showUpdateCheckFailedAlertWithError:(nullable NSError *)error;
+- (void)showUpdateFailedAlertWithError:(NSError *)error version:(NSString *)version;
+- (void)showRelaunchFailedAlertWithVersion:(NSString *)version;
 
 @end
 

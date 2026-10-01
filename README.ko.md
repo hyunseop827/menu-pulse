@@ -16,7 +16,9 @@ CPU와 RAM 사용량을 Mac 메뉴바에서 한눈에 확인하는 작은 앱입
 
 **[최신 DMG 다운로드](https://github.com/hyunseop827/menu-pulse/releases/latest/download/MenuPulse.dmg)** · 무료 · Apple Silicon · macOS 13 이상
 
-DMG를 열고 **Menu Pulse**를 **Applications**(응용 프로그램) 폴더로 드래그합니다. 업데이트할 때는 기존 앱을 종료하고 새 DMG의 앱으로 교체합니다. 앱을 사용하기 위해 이 저장소를 내려받거나 보관할 필요는 없습니다.
+DMG를 열고 **Menu Pulse**를 **Applications**(응용 프로그램) 폴더로 드래그합니다. 앱을 사용하기 위해 이 저장소를 내려받거나 보관할 필요는 없습니다.
+
+업데이트는 설정창에서 **Check for Updates…**를 누르면 됩니다. 새 버전이 있으면 먼저 확인을 받은 뒤 GitHub에서 내려받고, 릴리스의 SHA-256 체크섬과 앱의 코드 서명을 확인한 다음 앱을 교체하고 설정창을 연 채로 다시 시작합니다. DMG에서 실행 중일 때처럼 앱을 교체할 수 없으면 대신 다운로드 페이지를 안내합니다. 1.7.0 이전 버전에는 이 버튼이 없으므로 한 번은 새 DMG의 앱으로 교체하세요.
 
 **앱은 ad-hoc 서명을 사용하며 Apple 공증을 받지 않았습니다.** 처음 실행할 때 macOS가 차단하면 실행을 시도한 뒤 **시스템 설정 → 개인정보 보호 및 보안 → 그래도 열기**를 선택하세요. [Apple 안내](https://support.apple.com/ko-kr/guide/mac-help/mh40616/mac)를 참고할 수 있습니다.
 
@@ -28,7 +30,7 @@ DMG를 열고 **Menu Pulse**를 **Applications**(응용 프로그램) 폴더로 
 ```zsh
 curl -LO https://github.com/hyunseop827/menu-pulse/releases/latest/download/MenuPulse.dmg
 curl -LO https://github.com/hyunseop827/menu-pulse/releases/latest/download/SHA256SUMS.txt
-shasum -a 256 -c SHA256SUMS.txt
+shasum -a 256 -c --ignore-missing SHA256SUMS.txt
 ```
 
 </details>
@@ -50,7 +52,7 @@ shasum -a 256 -c SHA256SUMS.txt
 
 TEMP는 섭씨와 화씨를 지원하며 앱에서 읽을 수 있는 부품 센서 중 가장 높은 온도를 표시합니다. 배터리와 보정용 센서는 제외합니다. Mac 기종과 macOS 버전에 따라 센서를 읽지 못할 수 있으며, 실패하면 `--`를 표시하고 5분마다 재시도합니다. DISK는 홈 볼륨 사용량을 표시하며, Finder와 같이 시스템이 비울 수 있는 공간도 사용 가능한 공간으로 계산합니다. 남은 디스크 공간과 TEMP 상태 같은 자세한 내용은 메뉴바 항목에 마우스를 올리면 확인할 수 있습니다.
 
-메뉴바 항목을 클릭하면 설정창이 열리며, 설치된 버전과 GitHub 최신 릴리스 링크를 확인할 수 있습니다. 카메라 노치 등에 가려 메뉴바 항목이 보이지 않으면 응용 프로그램 폴더에서 Menu Pulse를 다시 실행하면 설정창이 열립니다. 설정창은 **⌘W** 또는 **Esc**로 닫을 수 있고, 다시 열면 마지막 위치에 표시됩니다. 처음 실행하면 **Open at login**(로그인 시 열기)을 켤지 한 번 묻고, 이후 설정에서 변경할 수 있습니다. **Reset Defaults는 지표 설정을 기본값으로 되돌리고 Open at login을 켭니다.** Reset Defaults와 Quit은 확인창을 표시하며, 종료해도 로그인 설정은 유지됩니다.
+메뉴바 항목을 클릭하면 설정창이 열리며, 설치된 버전과 **Check for Updates…** 버튼이 있습니다. 카메라 노치 등에 가려 메뉴바 항목이 보이지 않으면 응용 프로그램 폴더에서 Menu Pulse를 다시 실행하면 설정창이 열립니다. 설정창은 **⌘W** 또는 **Esc**로 닫을 수 있고, 다시 열면 마지막 위치에 표시됩니다. 처음 실행하면 **Open at login**(로그인 시 열기)을 켤지 한 번 묻고, 이후 설정에서 변경할 수 있습니다. **Reset Defaults는 지표 설정을 기본값으로 되돌리고 Open at login을 켭니다.** Reset Defaults와 Quit은 확인창을 표시하며, 종료해도 로그인 설정은 유지됩니다.
 
 <details>
 <summary>설정 화면 보기</summary>
@@ -65,7 +67,7 @@ TEMP는 섭씨와 화씨를 지원하며 앱에서 읽을 수 있는 부품 센�
 
 - Objective-C/AppKit 네이티브 앱; Electron, 웹뷰, 그래프, Dock 아이콘 없음
 - 타이머 하나로 활성화한 지표만 조회하며 화면이 꺼져 있거나 다른 사용자 세션이 활성화된 동안 정기 조회 중단
-- 백그라운드 네트워크 요청, 텔레메트리, 오류 보고 SDK, 기록, 지표 로그 없음; 릴리스 링크는 클릭할 때 브라우저에서 열림
+- 백그라운드 네트워크 요청, 텔레메트리, 오류 보고 SDK, 기록, 지표 로그 없음; **Check for Updates…**를 누를 때만 GitHub에 접속
 - 표시 설정, 갱신 주기, 온도 단위, 설정창과 메뉴바 항목 위치, 로그인 질문 완료 여부만 저장
 
 자원 사용량은 Mac 기종, macOS 버전, 활성화한 지표와 갱신 주기에 따라 달라집니다. TEMP 1초 설정은 센서 조회가 가장 많으므로 짧게 확인할 때 사용하는 것이 좋습니다. 특정 체크아웃의 측정 조건과 결과를 남기려면 [벤치마크](#벤치마크)를 참고하세요.

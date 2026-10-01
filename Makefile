@@ -10,7 +10,7 @@ OBJC_FLAGS = -fobjc-arc -fmodules -Wall -Wextra -Werror \
 	-Wnullable-to-nonnull-conversion -mmacosx-version-min=13.0 \
 	-isysroot "$(SDKROOT)" -I Sources/MenuPulse
 FRAMEWORKS = -framework AppKit -framework Foundation -framework CoreFoundation -framework CoreGraphics \
-	-framework IOKit -framework ServiceManagement
+	-framework IOKit -framework Security -framework ServiceManagement
 
 .PHONY: help app test analyze check verify-app dmg
 
@@ -20,7 +20,7 @@ help:
 	  'make test     Run tests in a temporary directory' \
 	  'make analyze  Run Clang static analysis' \
 	  'make check    Check scripts, metadata, analysis, tests, and app signature' \
-	  'make dmg      Create dist/MenuPulse.dmg and dist/SHA256SUMS.txt' \
+	  'make dmg      Create the DMG, the update ZIP, and SHA256SUMS.txt in dist' \
 	  'Scripts/benchmark.sh  Measure an isolated temporary build'
 
 app:
@@ -56,6 +56,10 @@ test:
 	  Sources/MenuPulse/SettingsStore.m Sources/MenuPulse/RefreshScheduler.m \
 	  -o "$$test_dir/SettingsSchedulerTests" -framework Foundation; \
 	CFFIXED_USER_HOME="$$test_dir/Home" "$$test_dir/SettingsSchedulerTests"; \
+	xcrun clang $(OBJC_FLAGS) -I Tests -arch "$(TEST_ARCH)" \
+	  Tests/UpdaterTests.m Sources/MenuPulse/Updater.m \
+	  -o "$$test_dir/UpdaterTests" -framework AppKit -framework Security; \
+	CFFIXED_USER_HOME="$$test_dir/Home" TMPDIR="$$test_dir/" "$$test_dir/UpdaterTests"; \
 	ui_sources=(); \
 	for source in Sources/MenuPulse/*.m; do \
 	  [[ "$$source" == Sources/MenuPulse/main.m ]] || ui_sources+=("$$source"); \
@@ -110,4 +114,11 @@ dmg: verify-app
 	hdiutil create -volname 'Menu Pulse' -srcfolder "$$staging" \
 	  -ov -format UDZO dist/MenuPulse.dmg; \
 	hdiutil verify dist/MenuPulse.dmg; \
-	cd dist; shasum -a 256 MenuPulse.dmg > SHA256SUMS.txt
+	rm -f dist/MenuPulse.zip; \
+	ditto -c -k --keepParent "$(BUILD_DIR)/Menu Pulse.app" dist/MenuPulse.zip; \
+	ditto -x -k dist/MenuPulse.zip "$$staging/Unzipped"; \
+	unzipped_app="$$staging/Unzipped/Menu Pulse.app"; \
+	codesign --verify --strict "$$unzipped_app"; \
+	[[ "$$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$$unzipped_app/Contents/Info.plist")" == "$(BUNDLE_ID)" ]] || \
+	  { echo 'The update ZIP must contain Menu Pulse.app at its top level.' >&2; exit 1; }; \
+	cd dist; shasum -a 256 MenuPulse.dmg MenuPulse.zip > SHA256SUMS.txt

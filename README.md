@@ -16,7 +16,9 @@ A compact CPU and RAM readout for your Mac's menu bar. Temperature and disk usag
 
 **[Download the latest DMG](https://github.com/hyunseop827/menu-pulse/releases/latest/download/MenuPulse.dmg)** · Free · Apple Silicon · macOS 13 or later
 
-Open the DMG and drag **Menu Pulse** to **Applications**. To update, quit the existing app and replace it with the app from the new DMG. You do not need to clone or keep this repository to use the app.
+Open the DMG and drag **Menu Pulse** to **Applications**. You do not need to clone or keep this repository to use the app.
+
+To update, click **Check for Updates…** in Settings. When a newer version exists, Menu Pulse asks first, then downloads it from GitHub, checks the release's SHA-256 checksum and the app's code signature, replaces itself, and restarts with Settings open. If it cannot replace itself, for example while it runs from the DMG, it offers the download page instead. Versions before 1.7.0 do not have this button; replace the app with the one from the new DMG once.
 
 **The app is ad-hoc signed and not notarized by Apple.** If macOS blocks the first launch, use **System Settings → Privacy & Security → Open Anyway** after trying to open it. See [Apple's instructions](https://support.apple.com/guide/mac-help/mh40616/mac).
 
@@ -28,7 +30,7 @@ See the [release notes](https://github.com/hyunseop827/menu-pulse/releases) for 
 ```zsh
 curl -LO https://github.com/hyunseop827/menu-pulse/releases/latest/download/MenuPulse.dmg
 curl -LO https://github.com/hyunseop827/menu-pulse/releases/latest/download/SHA256SUMS.txt
-shasum -a 256 -c SHA256SUMS.txt
+shasum -a 256 -c --ignore-missing SHA256SUMS.txt
 ```
 
 </details>
@@ -50,7 +52,7 @@ One or two metrics appear one per line. With three or four, CPU and RAM form the
 
 TEMP supports Celsius and Fahrenheit and shows the hottest component sensor the app can read; battery and calibration sensors are ignored. Sensor availability varies by Mac and macOS version; a failed read shows `--` and is retried every five minutes. DISK shows usage of the home volume and, like Finder, counts purgeable space as available. Hover over the menu bar item for details such as free disk space and TEMP status.
 
-Click the menu bar item to open Settings, which shows the installed version and a link to the latest GitHub release. If the item is hidden, for example behind the camera notch, open Menu Pulse again from Applications to show Settings. Close Settings with **⌘W** or **Esc**; it reopens where you left it. First launch asks about **Open at login** once; you can change it in Settings. **Reset Defaults restores the metric defaults and turns Open at login on.** Reset and Quit require confirmation; quitting preserves your login setting.
+Click the menu bar item to open Settings, which shows the installed version and **Check for Updates…**. If the item is hidden, for example behind the camera notch, open Menu Pulse again from Applications to show Settings. Close Settings with **⌘W** or **Esc**; it reopens where you left it. First launch asks about **Open at login** once; you can change it in Settings. **Reset Defaults restores the metric defaults and turns Open at login on.** Reset and Quit require confirmation; quitting preserves your login setting.
 
 <details>
 <summary>Settings screenshot</summary>
@@ -65,7 +67,7 @@ Click the menu bar item to open Settings, which shows the installed version and 
 
 - Native Objective-C/AppKit; no Electron, web view, chart, or Dock icon
 - One timer reads only enabled metrics; periodic reads pause while displays are asleep or another user's session is active
-- No background network requests, telemetry, crash-reporting SDK, history, or metric log; the release link opens in your browser when clicked
+- No background network requests, telemetry, crash-reporting SDK, history, or metric log; Menu Pulse contacts GitHub only when you click **Check for Updates…**
 - Stores only display choices, refresh intervals, temperature unit, the Settings window and menu bar item positions, and the one-time login prompt marker
 
 Resource use depends on your Mac, macOS version, enabled metrics, and refresh intervals. The 1-second TEMP option performs the most sensor work and is best used for short checks. See [Benchmark](#benchmark) to measure a specific checkout with its test conditions recorded.

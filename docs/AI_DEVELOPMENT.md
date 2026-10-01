@@ -20,7 +20,7 @@ results, and publishes each release.
 
 - **Compiler and analyzer**: every warning is an error, and any Clang static
   analysis finding fails `make check`.
-- **Tests**: `make check` runs three test executables and the benchmark tests.
+- **Tests**: `make check` runs four test executables and the benchmark tests.
   CI runs the same checks on pull requests and on pushes to `main`, before a
   release is published.
 - **Reviews**: several independent AI reviewers examine the code from different
@@ -28,7 +28,8 @@ results, and publishes each release.
   agents then try to refute each finding, and only confirmed issues are fixed.
 - **Real hardware**: behavior that tests cannot cover is checked on a Mac, for
   example temperature readings against the raw sensor values, disk figures
-  against Finder, and README screenshots captured from the current build.
+  against Finder, an update and restart of a test copy, and README screenshots
+  captured from the current build.
 
 ## Limitations
 

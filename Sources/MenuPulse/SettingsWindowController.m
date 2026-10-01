@@ -3,6 +3,49 @@
 #import "SettingsStore.h"
 
 static NSString * const MPSettingsWindowFrameName = @"MenuPulseSettings";
+static NSString * const MPLatestReleasePageURLString =
+    @"https://github.com/hyunseop827/menu-pulse/releases/latest";
+
+/// Draws the app icon with a status badge so update alerts read at a glance.
+static NSImage *MPBadgedAppIcon(NSString *symbolName, NSColor *glyphColor, NSColor *fillColor) {
+    NSImage *appIcon = NSApp.applicationIconImage;
+    NSImageSymbolConfiguration *configuration = [[NSImageSymbolConfiguration
+        configurationWithPointSize:24 weight:NSFontWeightBold]
+        configurationByApplyingConfiguration:[NSImageSymbolConfiguration
+            configurationWithPaletteColors:@[glyphColor, fillColor]]];
+    NSImage *symbol = [[NSImage imageWithSystemSymbolName:symbolName accessibilityDescription:nil]
+        imageWithSymbolConfiguration:configuration];
+    if (!symbol) {
+        return appIcon;
+    }
+    return [NSImage imageWithSize:NSMakeSize(64, 64) flipped:NO drawingHandler:^BOOL(NSRect rect) {
+        [appIcon drawInRect:rect];
+        // A ring in the alert's background color separates the badge from the icon.
+        NSRect badgeRect = NSMakeRect(NSMaxX(rect) - 28, 2, 26, 26);
+        [NSColor.windowBackgroundColor setFill];
+        [[NSBezierPath bezierPathWithOvalInRect:NSInsetRect(badgeRect, -2, -2)] fill];
+        NSSize symbolSize = symbol.size;
+        CGFloat scale = MIN(NSWidth(badgeRect) / symbolSize.width,
+                            NSHeight(badgeRect) / symbolSize.height);
+        NSSize drawnSize = NSMakeSize(symbolSize.width * scale, symbolSize.height * scale);
+        [symbol drawInRect:NSMakeRect(NSMidX(badgeRect) - drawnSize.width / 2,
+                                      NSMidY(badgeRect) - drawnSize.height / 2,
+                                      drawnSize.width, drawnSize.height)];
+        return YES;
+    }];
+}
+
+/// Uses the mint and charcoal of the app icon.
+static NSImage *MPUpdateIcon(NSString *symbolName) {
+    return MPBadgedAppIcon(symbolName,
+                           [NSColor colorWithSRGBRed:0.09 green:0.10 blue:0.12 alpha:1],
+                           [NSColor colorWithSRGBRed:0.42 green:0.93 blue:0.74 alpha:1]);
+}
+
+static NSImage *MPUpdateProblemIcon(void) {
+    return MPBadgedAppIcon(@"exclamationmark.circle.fill",
+                           NSColor.whiteColor, NSColor.systemOrangeColor);
+}
 
 /// Menu Pulse has no main menu, so the window handles its own close keys.
 @interface MPSettingsWindow : NSWindow
@@ -42,6 +85,7 @@ static NSString * const MPSettingsWindowFrameName = @"MenuPulseSettings";
 @property(nonatomic, strong) NSButton *ramCheckbox;
 @property(nonatomic, strong) NSButton *diskCheckbox;
 @property(nonatomic, strong) NSButton *loginCheckbox;
+@property(nonatomic, strong) NSButton *updateButton;
 @property(nonatomic, strong) NSPopUpButton *cpuRAMRefreshPopup;
 @property(nonatomic, strong) NSPopUpButton *temperatureRefreshPopup;
 @property(nonatomic, strong) NSPopUpButton *diskRefreshPopup;
@@ -271,15 +315,16 @@ static NSString * const MPSettingsWindowFrameName = @"MenuPulseSettings";
     versionLabel.font = [NSFont systemFontOfSize:11];
     versionLabel.textColor = NSColor.secondaryLabelColor;
 
-    NSButton *releaseButton = [NSButton buttonWithTitle:@"View Latest Release"
-                                                target:self
-                                                action:@selector(openLatestRelease:)];
-    releaseButton.bordered = NO;
-    releaseButton.font = [NSFont systemFontOfSize:11];
-    releaseButton.contentTintColor = NSColor.linkColor;
-    releaseButton.toolTip = @"Open the latest Menu Pulse release on GitHub.";
+    self.updateButton = [NSButton buttonWithTitle:@""
+                                           target:self
+                                           action:@selector(checkForUpdatesPressed:)];
+    self.updateButton.bordered = NO;
+    self.updateButton.font = [NSFont systemFontOfSize:11];
+    self.updateButton.contentTintColor = NSColor.linkColor;
+    self.updateButton.toolTip = @"Check GitHub for a newer version of Menu Pulse.";
+    [self syncUpdateButton];
 
-    NSStackView *row = [NSStackView stackViewWithViews:@[versionLabel, releaseButton]];
+    NSStackView *row = [NSStackView stackViewWithViews:@[versionLabel, self.updateButton]];
     row.orientation = NSUserInterfaceLayoutOrientationHorizontal;
     row.alignment = NSLayoutAttributeCenterY;
     row.distribution = NSStackViewDistributionEqualSpacing;
@@ -341,6 +386,26 @@ static NSString * const MPSettingsWindowFrameName = @"MenuPulseSettings";
 - (void)setLoginEnabled:(BOOL)loginEnabled {
     _loginEnabled = loginEnabled;
     self.loginCheckbox.state = loginEnabled ? NSControlStateValueOn : NSControlStateValueOff;
+}
+
+- (void)setUpdateActivity:(MPUpdateActivity)updateActivity {
+    _updateActivity = updateActivity;
+    [self syncUpdateButton];
+}
+
+- (void)syncUpdateButton {
+    switch (self.updateActivity) {
+        case MPUpdateActivityIdle:
+            self.updateButton.title = @"Check for Updates…";
+            break;
+        case MPUpdateActivityChecking:
+            self.updateButton.title = @"Checking for Updates…";
+            break;
+        case MPUpdateActivityInstalling:
+            self.updateButton.title = @"Updating…";
+            break;
+    }
+    self.updateButton.enabled = self.updateActivity == MPUpdateActivityIdle;
 }
 
 - (void)selectValue:(id)value inPopup:(NSPopUpButton *)popup {
@@ -412,9 +477,13 @@ static NSString * const MPSettingsWindowFrameName = @"MenuPulseSettings";
     [self.delegate settingsWindowControllerDidCloseWindow:self];
 }
 
-- (void)openLatestRelease:(id)sender {
+- (void)checkForUpdatesPressed:(id)sender {
     (void)sender;
-    NSURL *url = [NSURL URLWithString:@"https://github.com/hyunseop827/menu-pulse/releases/latest"];
+    [self.delegate settingsWindowControllerDidRequestUpdateCheck:self];
+}
+
+- (void)openLatestReleasePage {
+    NSURL *url = [NSURL URLWithString:MPLatestReleasePageURLString];
     if (url) {
         self.urlOpener(url);
     }
@@ -463,17 +532,91 @@ static NSString * const MPSettingsWindowFrameName = @"MenuPulseSettings";
     }
 }
 
+- (void)showUpToDateAlertWithVersion:(NSString *)version {
+    NSAlert *alert = [self alertWithMessage:@"Menu Pulse Is Up to Date"
+                               informative:[NSString stringWithFormat:
+                                   @"Version %@ is the latest version.", version]
+                                     action:@"OK"
+                                     cancel:nil];
+    alert.icon = MPUpdateIcon(@"checkmark.circle.fill");
+    self.alertRunner(alert);
+}
+
+- (BOOL)runUpdatePromptWithVersion:(NSString *)version currentVersion:(NSString *)currentVersion {
+    NSString *informative = [NSString stringWithFormat:
+        @"You have version %@. Menu Pulse will download the update from GitHub and restart.",
+        currentVersion];
+    NSAlert *alert = [self alertWithMessage:[NSString stringWithFormat:
+                                   @"Update to Menu Pulse %@?", version]
+                               informative:informative
+                                     action:@"Update"
+                                     cancel:@"Not Now"];
+    alert.icon = MPUpdateIcon(@"arrow.down.circle.fill");
+    return self.alertRunner(alert) == NSAlertFirstButtonReturn;
+}
+
+- (void)showManualUpdateAlertWithVersion:(NSString *)version {
+    NSAlert *alert = [self alertWithMessage:[NSString stringWithFormat:
+                                   @"Menu Pulse %@ Is Available", version]
+                               informative:@"Menu Pulse doesn't have permission to replace itself in its current location. Download the new version and replace the app yourself."
+                                     action:@"Open Download Page"
+                                     cancel:@"Not Now"];
+    alert.icon = MPUpdateIcon(@"arrow.down.circle.fill");
+    if (self.alertRunner(alert) == NSAlertFirstButtonReturn) {
+        [self openLatestReleasePage];
+    }
+}
+
+- (void)showUpdateCheckFailedAlertWithError:(nullable NSError *)error {
+    NSString *reason = error.localizedDescription;
+    NSAlert *alert = [self alertWithMessage:@"Couldn't Check for Updates"
+                               informative:reason.length > 0 ? reason : @"Try again later."
+                                     action:@"OK"
+                                     cancel:nil];
+    alert.icon = MPUpdateProblemIcon();
+    self.alertRunner(alert);
+}
+
+- (void)showUpdateFailedAlertWithError:(NSError *)error version:(NSString *)version {
+    NSString *informative = [NSString stringWithFormat:
+        @"%@\n\nYou can download Menu Pulse %@ from GitHub instead.",
+        error.localizedDescription, version];
+    NSAlert *alert = [self alertWithMessage:@"Couldn't Update Menu Pulse"
+                               informative:informative
+                                     action:@"Open Download Page"
+                                     cancel:@"Close"];
+    alert.icon = MPUpdateProblemIcon();
+    if (self.alertRunner(alert) == NSAlertFirstButtonReturn) {
+        [self openLatestReleasePage];
+    }
+}
+
+- (void)showRelaunchFailedAlertWithVersion:(NSString *)version {
+    NSString *informative = [NSString stringWithFormat:
+        @"Menu Pulse %@ is installed but couldn't restart. Quit Menu Pulse and open it again.",
+        version];
+    NSAlert *alert = [self alertWithMessage:@"Restart Menu Pulse to Finish Updating"
+                               informative:informative
+                                     action:@"OK"
+                                     cancel:nil];
+    alert.icon = MPUpdateProblemIcon();
+    self.alertRunner(alert);
+}
+
 - (NSAlert *)alertWithMessage:(NSString *)message
                   informative:(NSString *)informative
                         action:(NSString *)action
-                        cancel:(NSString *)cancel {
+                        cancel:(nullable NSString *)cancel {
     NSAlert *alert = [[NSAlert alloc] init];
     alert.messageText = message;
     alert.informativeText = informative;
     NSButton *actionButton = [alert addButtonWithTitle:action];
     actionButton.keyEquivalent = @"\r";
-    NSButton *cancelButton = [alert addButtonWithTitle:cancel];
-    cancelButton.keyEquivalent = @"\e";
+    NSString *cancelTitle = cancel;
+    if (cancelTitle) {
+        NSButton *cancelButton = [alert addButtonWithTitle:cancelTitle];
+        cancelButton.keyEquivalent = @"\e";
+    }
     return alert;
 }
 
