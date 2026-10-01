@@ -209,8 +209,6 @@ static NSTimeInterval MPTemperatureMonotonicTime(void) {
 
 @implementation MPTemperatureReader
 
-static const void *MPTemperatureReaderQueueKey = &MPTemperatureReaderQueueKey;
-
 - (instancetype)init {
     self = [super init];
     if (self) {
@@ -224,12 +222,6 @@ static const void *MPTemperatureReaderQueueKey = &MPTemperatureReaderQueueKey;
         );
         _queue = dispatch_queue_create("MenuPulse.temperature-reader", attributes);
         _cancellationLock = [[NSLock alloc] init];
-        dispatch_queue_set_specific(
-            _queue,
-            MPTemperatureReaderQueueKey,
-            (__bridge void *)self,
-            NULL
-        );
     }
     return self;
 }
@@ -262,29 +254,16 @@ static const void *MPTemperatureReaderQueueKey = &MPTemperatureReaderQueueKey;
 }
 
 - (void)invalidateHardware {
-    void (^invalidateBlock)(void) = ^{
-        [self.hidReader invalidateClient];
-    };
-
     // Advance the generation and enqueue invalidation under the same lock used
-    // when reads capture their token. This keeps queue order deterministic even
-    // if callers arrive from different threads.
+    // when reads capture their token. The block waits behind any active read
+    // without blocking the caller, and a later read is queued after it, which
+    // preserves read -> invalidate -> read ordering across a quick off/on toggle.
     [self.cancellationLock lock];
     self.cancellationGeneration += 1;
-    if ([self isOnReaderQueue]) {
-        [self.cancellationLock unlock];
-        invalidateBlock();
-    } else {
-        // Enqueue behind any active read without blocking the settings UI.
-        // A subsequent read is queued after this block, preserving
-        // read -> invalidate -> read ordering across a quick off/on toggle.
-        dispatch_async(self.queue, invalidateBlock);
-        [self.cancellationLock unlock];
-    }
-}
-
-- (BOOL)isOnReaderQueue {
-    return dispatch_get_specific(MPTemperatureReaderQueueKey) == (__bridge void *)self;
+    dispatch_async(self.queue, ^{
+        [self.hidReader invalidateClient];
+    });
+    [self.cancellationLock unlock];
 }
 
 - (BOOL)isCancellationGenerationCurrent:(NSUInteger)generation {

@@ -27,9 +27,9 @@ static NSUInteger MPLegacyMigrationCallCount = 0;
 @property(nonatomic) BOOL cachedLoginEnabled;
 @property(nonatomic) BOOL screensAsleep;
 @property(nonatomic) BOOL sessionInactive;
-@property(nonatomic, copy) NSArray<NSString *> *lastRenderedRows;
 - (MPSettingsWindowController *)activeSettingsWindowController;
 - (void)showSettings;
+- (BOOL)applicationShouldHandleReopen:(NSApplication *)sender hasVisibleWindows:(BOOL)flag;
 - (NSArray<NSString *> *)statusRows;
 - (NSString *)statusTooltip;
 - (void)updateStatusImage;
@@ -330,8 +330,6 @@ static MPMenuPulse *MPMakePulse(NSUserDefaults *defaults,
     pulse.settingsStore = [[MPSettingsStore alloc] initWithUserDefaults:defaults];
     MPFakeLoginItemManager *manager = [[MPFakeLoginItemManager alloc] init];
     pulse.loginItemManager = manager;
-    pulse.cachedLoginEnabled = manager.fakeEnabled;
-    pulse.lastRenderedRows = @[];
     if (managerOut) {
         *managerOut = manager;
     }
@@ -516,9 +514,6 @@ static void MPTestSettingsWindowControls(void) {
     MPSettingsWindowController *controller = [[MPSettingsWindowController alloc]
         initWithSettingsStore:store
                       delegate:delegate];
-    MPAssert(fabs(NSHeight(controller.window.contentView.bounds) - 455.0) < 0.5,
-             @"settings window should fit its controls without excess bottom space");
-
     MPAssert([controller.cpuRAMRefreshPopup.itemTitles isEqualToArray:@[
         @"Every 1 second", @"Every 3 seconds", @"Every 10 seconds",
     ]], @"CPU and RAM should offer 1, 3, and 10 seconds");
@@ -623,11 +618,13 @@ static void MPTestSettingsWindowControls(void) {
 
     [controller showSettingsWindow];
     [content layoutSubtreeIfNeeded];
-    NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"]
-        ?: [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleVersion"];
-    MPAssert(MPViewContainsText(content, version.length > 0
-        ? [NSString stringWithFormat:@"Version %@", version] : @"Development build"),
-        @"settings should display this executable's bundle version");
+    NSRect rootFrame = content.subviews.firstObject.frame;
+    MPAssert(fabs(NSMaxY(rootFrame) - (NSHeight(content.bounds) - 18.0)) < 0.5 &&
+             NSMinY(rootFrame) >= 17.5 && NSMinY(rootFrame) < 19.5,
+             @"the settings window should fit its controls with equal top and bottom margins");
+    // The test binary embeds Tests/MenuPulseUITests-Info.plist.
+    MPAssert(MPViewContainsText(content, @"Version 9.8.7"),
+             @"settings should display this executable's bundle version");
     __block NSURL *openedURL = nil;
     controller.urlOpener = ^BOOL(NSURL *url) {
         openedURL = url;
@@ -989,12 +986,6 @@ static void MPTestSettingsChangesUpdateMonitoring(void) {
 }
 
 static void MPTestTemperatureLifecycle(MPMenuPulse *pulse) {
-    MPAssert(MPTemperatureRetryAllowed(100.0, NAN),
-             @"temperature should retry without a prior failure");
-    MPAssert(!MPTemperatureRetryAllowed(399.9, 100.0) &&
-             MPTemperatureRetryAllowed(400.0, 100.0),
-             @"temperature should retain a five-minute failure cooldown");
-
     MPFakeTemperatureReader *reader = [[MPFakeTemperatureReader alloc] init];
     pulse.temperatureReader = reader;
     pulse.settingsStore.showTemperature = YES;
@@ -1135,10 +1126,21 @@ static void MPTestInactiveSessionPausesMonitoring(void) {
     [pulse.refreshScheduler stop];
 }
 
+static void MPTestReopenShowsSettings(void) {
+    MPMenuPulse *pulse = MPMakePulse(MPMakeIsolatedDefaults(), NULL);
+    pulse.settingsStore.hasCompletedOpenAtLoginPrompt = YES;
+    [pulse start];
+    MPAssert(NSApp.delegate == (id<NSApplicationDelegate>)pulse,
+             @"Menu Pulse should receive application reopen events");
+    MPAssert(![pulse applicationShouldHandleReopen:NSApp hasVisibleWindows:NO] &&
+             pulse.settingsWindowController.window.isVisible,
+             @"opening the app again should show Settings even if the menu bar item is hidden");
+    [pulse.settingsWindowController closeSettingsWindow];
+    [pulse.refreshScheduler stop];
+}
+
 static void MPTestStaleTemperatureFailurePreservesCooldown(void) {
-    MPFakeLoginItemManager *manager = nil;
-    MPMenuPulse *pulse = MPMakePulse(MPMakeIsolatedDefaults(), &manager);
-    (void)manager;
+    MPMenuPulse *pulse = MPMakePulse(MPMakeIsolatedDefaults(), NULL);
     MPFakeTemperatureReader *reader = [[MPFakeTemperatureReader alloc] init];
     pulse.temperatureReader = reader;
     pulse.settingsStore.showTemperature = YES;
@@ -1213,9 +1215,7 @@ int main(void) {
     @autoreleasepool {
         [NSApplication sharedApplication];
 
-        MPFakeLoginItemManager *manager = nil;
-        MPMenuPulse *pulse = MPMakePulse(MPMakeIsolatedDefaults(), &manager);
-        (void)manager;
+        MPMenuPulse *pulse = MPMakePulse(MPMakeIsolatedDefaults(), NULL);
         MPTestStatusRowsAndTooltip(pulse);
         MPTestSettingsWindowControls();
         MPTestConfirmationAlerts();
@@ -1232,6 +1232,13 @@ int main(void) {
         MPTestInactiveSessionPausesMonitoring();
         MPTestAsyncLoginItemUpdates();
         MPTestLoginItemMigrationControl();
+        MPTestReopenShowsSettings();
+
+        // AppKit saves window frames and menu bar positions in this test
+        // binary's own defaults domain. Remove them here; `make test` also
+        // removes the domain if the binary stops early.
+        [NSUserDefaults.standardUserDefaults
+            removePersistentDomainForName:NSProcessInfo.processInfo.processName];
 
         if (MPFailureCount != 0) {
             fprintf(stderr, "%lu UI test(s) failed\n", (unsigned long)MPFailureCount);

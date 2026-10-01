@@ -1,7 +1,7 @@
 # Menu Pulse
 
 <p align="center">
-  <img src="Packaging/AppIcon.png" alt="Menu Pulse icon" width="96">
+  <img src="docs/images/app-icon.png" alt="Menu Pulse icon" width="96">
 </p>
 
 [한국어 README](README.ko.md)
@@ -9,7 +9,7 @@
 A compact CPU and RAM readout for your Mac's menu bar. Temperature and disk usage are optional.
 
 <p align="center">
-  <img src="menupulse-menubar.png" alt="Menu Pulse default CPU and RAM readout" width="160">
+  <img src="docs/images/menubar.png" alt="Menu Pulse default CPU and RAM readout" width="160">
 </p>
 
 ## Download
@@ -45,18 +45,18 @@ shasum -a 256 -c SHA256SUMS.txt
 One or two metrics appear one per line. With three or four, CPU and RAM form the left column and TEMP and DISK the right.
 
 <p align="center">
-  <img src="menupulse-menubar-all.png" alt="Menu Pulse showing CPU, RAM, TEMP, and DISK" width="322">
+  <img src="docs/images/menubar-all.png" alt="Menu Pulse showing CPU, RAM, TEMP, and DISK" width="322">
 </p>
 
 TEMP supports Celsius and Fahrenheit and shows the hottest component sensor the app can read; battery and calibration sensors are ignored. Sensor availability varies by Mac and macOS version; a failed read shows `--` and is retried every five minutes. DISK shows usage of the home volume and, like Finder, counts purgeable space as available. Hover over the menu bar item for details such as free disk space and TEMP status.
 
-Click the menu bar item to open Settings, which shows the installed version and a link to the latest GitHub release. Close it with **⌘W** or **Esc**; it reopens where you left it. First launch asks about Open at Login once; you can change it in Settings. **Reset Defaults restores the metric defaults and turns Open at Login on.** Reset and Quit require confirmation; quitting preserves your login setting.
+Click the menu bar item to open Settings, which shows the installed version and a link to the latest GitHub release. If the item is hidden, for example behind the camera notch, open Menu Pulse again from Applications to show Settings. Close Settings with **⌘W** or **Esc**; it reopens where you left it. First launch asks about **Open at login** once; you can change it in Settings. **Reset Defaults restores the metric defaults and turns Open at login on.** Reset and Quit require confirmation; quitting preserves your login setting.
 
 <details>
 <summary>Settings screenshot</summary>
 
 <p align="center">
-  <img src="menupulse-setting.png" alt="Menu Pulse settings" width="480">
+  <img src="docs/images/settings.png" alt="Menu Pulse settings" width="480">
 </p>
 
 </details>
@@ -72,7 +72,7 @@ Resource use depends on your Mac, macOS version, enabled metrics, and refresh in
 
 ## Removal
 
-Turn off **Open at Login** in the app's settings, choose **Quit**, then move `/Applications/Menu Pulse.app` to Trash.
+Turn off **Open at login** in Settings, click **Quit**, then move `/Applications/Menu Pulse.app` to Trash. To also remove saved settings, run `defaults delete dev.hyunseop.MenuPulse` after quitting.
 
 ## Development
 
@@ -101,14 +101,18 @@ Keep the display awake while measuring. Each run saves a report with its test co
 
 - `report.txt`: build, machine, and sampling conditions; result summary
 - `samples.txt`: CPU and RSS samples from `ps`
-- `vmmap.txt`: final memory reading, when available
+- `vmmap.txt`: final `vmmap` output, or the reason it was unavailable
 - `app.log`: output from the measured app
 
-Set `RESULTS_DIR` to choose a different parent directory. For a short script check, use `WARMUP=0 DURATION=10 Scripts/benchmark.sh`; use longer, repeated runs for comparisons.
+`SHOW_CPU`, `SHOW_RAM`, `SHOW_TEMPERATURE`, and `SHOW_DISK` (0 or 1) choose metrics individually, and `INTERVAL` sets the seconds between samples (default 1). Set `RESULTS_DIR` to choose a different parent directory. For a short script check, use `WARMUP=0 DURATION=10 Scripts/benchmark.sh`; use longer, repeated runs for comparisons.
 
 CPU results summarize `ps` readings, which are decaying averages over up to a minute, not independent one-second measurements. RSS and Private dirty are different memory measures, reported separately in MiB; Private dirty is not total memory use. Compare results only with matching hardware, macOS, enabled metrics, and refresh intervals.
 
-The temporary build, isolated preferences, and measured process are cleaned up on exit; the results remain. The benchmark does not share the installed app's preferences or login registration.
+The temporary build, temporary home folder, and measured process are cleaned up on exit; the results remain. The measured build uses its own bundle identifier, so it does not share the installed app's preferences or login registration.
+
+## AI-assisted development
+
+Menu Pulse is developed with AI coding assistants under the maintainer's review. See [AI-assisted development](docs/AI_DEVELOPMENT.md) for how changes are made and checked, and [Architecture](docs/ARCHITECTURE.md) for how the app works.
 
 ## License
 

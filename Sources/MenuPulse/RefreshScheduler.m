@@ -4,6 +4,9 @@
 
 const NSTimeInterval MPRefreshSchedulerNoPendingDelay = DBL_MAX;
 
+@interface MPSystemMonotonicClock : NSObject <MPMonotonicClock>
+@end
+
 @implementation MPSystemMonotonicClock
 
 - (NSTimeInterval)monotonicTime {

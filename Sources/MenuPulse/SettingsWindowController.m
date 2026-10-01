@@ -86,10 +86,6 @@ static NSString * const MPSettingsWindowFrameName = @"MenuPulseSettings";
     self.window.title = @"Menu Pulse Settings";
     self.window.releasedWhenClosed = NO;
     self.window.delegate = self;
-    [self.window center];
-    // The controller is released when the window closes, so keep the
-    // position the user chose for the next time Settings opens.
-    self.window.frameAutosaveName = MPSettingsWindowFrameName;
 
     NSView *contentView = [[NSView alloc] init];
     self.window.contentView = contentView;
@@ -172,6 +168,15 @@ static NSString * const MPSettingsWindowFrameName = @"MenuPulseSettings";
         [root.topAnchor constraintEqualToAnchor:contentView.topAnchor constant:18],
         [root.bottomAnchor constraintLessThanOrEqualToAnchor:contentView.bottomAnchor constant:-18],
     ]];
+
+    // Control heights differ between macOS versions, so fit the window to its
+    // controls to keep the bottom margin equal to the top one.
+    [self.window setContentSize:NSMakeSize(390, ceil(root.fittingSize.height) + 36)];
+    [self.window center];
+    // The controller is released when the window closes, so keep the
+    // position the user chose for the next time Settings opens. Only the
+    // position is restored because the window is not resizable.
+    self.window.frameAutosaveName = MPSettingsWindowFrameName;
 
     [self syncControls];
 }

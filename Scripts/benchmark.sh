@@ -9,7 +9,7 @@ RESULTS_DIR="${RESULTS_DIR:-$ROOT_DIR/build/benchmarks}"
 WARMUP="${WARMUP:-30}"
 DURATION="${DURATION:-300}"
 INTERVAL="${INTERVAL:-1}"
-CPU_RAM_REFRESH_INTERVAL="${CPU_RAM_REFRESH_INTERVAL:-${REFRESH_INTERVAL:-3}}"
+CPU_RAM_REFRESH_INTERVAL="${CPU_RAM_REFRESH_INTERVAL:-3}"
 TEMPERATURE_REFRESH_INTERVAL="${TEMPERATURE_REFRESH_INTERVAL:-30}"
 DISK_REFRESH_INTERVAL="${DISK_REFRESH_INTERVAL:-300}"
 SHOW_CPU="${SHOW_CPU:-1}"
@@ -182,11 +182,15 @@ echo "Building Menu Pulse for measurement..."
 APP_PATH="$BENCHMARK_DIR/Build/Menu Pulse.app"
 BIN_PATH="$APP_PATH/Contents/MacOS/MenuPulse"
 BENCHMARK_HOME="$BENCHMARK_DIR/Home"
-/bin/mkdir -p "$BENCHMARK_HOME/Library/Preferences"
+/bin/mkdir -p "$BENCHMARK_HOME"
 # A distinct bundle identifier keeps measurement builds separate from the
-# installed app's ServiceManagement registration. Only results are retained.
+# installed app's preferences and ServiceManagement registration. Only results
+# are retained; build output is shown only when the build fails.
 make -s -C "$ROOT_DIR" app BUILD_DIR="$BENCHMARK_DIR/Build" \
-  BUNDLE_ID=dev.hyunseop.MenuPulse.Benchmark >/dev/null
+  BUNDLE_ID=dev.hyunseop.MenuPulse.Benchmark >"$BENCHMARK_DIR/build.log" 2>&1 || {
+  cat "$BENCHMARK_DIR/build.log" >&2
+  fail "Building Menu Pulse failed."
+}
 [[ -x "$BIN_PATH" ]] || fail "Built executable was not found: $BIN_PATH"
 echo "App version: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Contents/Info.plist")"
 
@@ -201,8 +205,9 @@ SCENARIO_PARTS=()
 [[ "$SHOW_DISK" == "0" ]] || SCENARIO_PARTS+=(DISK)
 SCENARIO="$(IFS=/; echo "${SCENARIO_PARTS[*]}")"
 
-# The command-line pairs select the scenario through NSArgumentDomain.
-# CFFIXED_USER_HOME isolates persistent defaults, including legacy-key cleanup.
+# The command-line pairs select the scenario through NSArgumentDomain, so stored
+# settings do not affect the measurement. CFFIXED_USER_HOME points the app's
+# home folder (the DISK volume and legacy login-item lookup) at a temporary one.
 CFFIXED_USER_HOME="$BENCHMARK_HOME" \
   MENU_PULSE_DISABLE_LOGIN_ITEM_MIGRATION=1 \
   "$BIN_PATH" \
@@ -300,12 +305,15 @@ if command -v vmmap >/dev/null 2>&1 && vmmap -summary "$BENCHMARK_PID" > "$VMMAP
         if (unit == "K") return amount / 1024
         if (unit == "M") return amount
         if (unit == "G") return amount * 1024
+        if (unit == "T") return amount * 1024 * 1024
         return value / 1024 / 1024
       }
+      # Only the region table counts; the MALLOC ZONE table has its own TOTAL.
+      /^MALLOC ZONE/ { exit }
       /^TOTAL[[:space:]]|^TOTAL, minus reserved VM space/ {
         count = 0
         for (i = 1; i <= NF; i += 1) {
-          if ($i ~ /^[0-9.]+[KMG]?$/) sizes[++count] = $i
+          if ($i ~ /^[0-9.]+[KMGT]?$/) sizes[++count] = $i
         }
         if (count >= 3) dirty = to_mib(sizes[3])
       }

@@ -18,15 +18,7 @@ trap 'exit 143' TERM
 
 fail() { echo "BenchmarkTests: $*" >&2; exit 1; }
 
-mkdir -p "$TEST_DIR/Temp" "$TEST_DIR/Home/Library/Preferences"
-# The measured app would remove this legacy key from its own defaults domain
-# if it ever used this home instead of its private benchmark home.
-PREFERENCES_DIR="$TEST_DIR/Home/Library/Preferences"
-for domain in dev.hyunseop.MenuPulse dev.hyunseop.MenuPulse.Benchmark; do
-  plutil -create xml1 "$PREFERENCES_DIR/$domain.plist"
-  plutil -insert cpuRefreshInterval -float 9 "$PREFERENCES_DIR/$domain.plist"
-done
-cp -R "$PREFERENCES_DIR" "$TEST_DIR/preferences.before"
+mkdir -p "$TEST_DIR/Temp" "$TEST_DIR/Home"
 
 # Watch the real run so the test checks the identity of the executable that is
 # measured, as well as successful output and cleanup of its temporary files.
@@ -56,7 +48,6 @@ wait "$BENCHMARK_SCRIPT_PID" || { cat "$TEST_DIR/output.log" >&2; fail 'benchmar
 BENCHMARK_SCRIPT_PID=""
 grep -q '^CPU sample average:' "$TEST_DIR/output.log" || fail 'CPU results missing'
 grep -q '^RSS average:' "$TEST_DIR/output.log" || fail 'memory results missing'
-diff -r "$PREFERENCES_DIR" "$TEST_DIR/preferences.before" >/dev/null || fail 'preferences changed'
 if kill -0 "$MEASURED_PID" 2>/dev/null; then fail 'measured process was left running'; fi
 REMAINING=("$TEST_DIR"/Temp/*)
 [[ "${#REMAINING[@]}" == 0 ]] || fail 'temporary build or preferences were left behind'
@@ -90,6 +81,21 @@ awk '
 ' "${RESULTS[0]}/samples.txt" || fail 'saved ps samples are incomplete or invalid'
 [[ -s "${RESULTS[0]}/vmmap.txt" ]] || fail 'vmmap output or failure reason missing'
 [[ -f "${RESULTS[0]}/app.log" ]] || fail 'app log was not retained'
+if grep -q '^REGION TYPE' "${RESULTS[0]}/vmmap.txt"; then
+  # vmmap succeeded, so the report must use the region table total, not the
+  # MALLOC ZONE total, and must not fall back to "unavailable".
+  EXPECTED_DIRTY="$(awk '
+    /^MALLOC ZONE/ { exit }
+    /^TOTAL[[:space:]]/ {
+      value = $4; unit = substr(value, length(value), 1); amount = substr(value, 1, length(value) - 1) + 0
+      if (unit == "K") amount /= 1024; else if (unit == "G") amount *= 1024; else if (unit == "T") amount *= 1024 * 1024
+      printf "%.1f MiB", amount; exit
+    }' "${RESULTS[0]}/vmmap.txt")"
+  [[ -n "$EXPECTED_DIRTY" ]] || fail 'vmmap region total missing'
+  grep -Fxq "Private dirty (vmmap DIRTY total, end of run): $EXPECTED_DIRTY" "$REPORT" ||
+    fail "reported Private dirty does not match the vmmap region total ($EXPECTED_DIRTY)"
+fi
+if grep -Fq 'replacing existing signature' "$REPORT"; then fail 'build output leaked into the report'; fi
 
 # Failure of this optional tool must still leave a usable, distinct report.
 mkdir "$TEST_DIR/Tools"

@@ -9,7 +9,7 @@
 
 #import <CoreGraphics/CoreGraphics.h>
 
-@interface MPMenuPulse () <MPSettingsWindowControllerDelegate>
+@interface MPMenuPulse () <NSApplicationDelegate, MPSettingsWindowControllerDelegate>
 @property(nonatomic, strong) NSStatusItem *statusItem;
 @property(nonatomic, strong) MPLoginItemManager *loginItemManager;
 @property(nonatomic, strong) MPSettingsStore *settingsStore;
@@ -59,6 +59,7 @@
         return;
     }
     [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+    NSApp.delegate = self;
     [self observeApplicationActivation];
     [self observeWorkspace];
     self.screensAsleep = [self areScreensAsleep];
@@ -87,6 +88,15 @@
     } else if (!self.settingsStore.hasCompletedOpenAtLoginPrompt) {
         [self scheduleOpenAtLoginPrompt];
     }
+}
+
+- (BOOL)applicationShouldHandleReopen:(NSApplication *)sender hasVisibleWindows:(BOOL)flag {
+    (void)sender;
+    (void)flag;
+    // Opening the app again shows Settings, which stays reachable even when
+    // the menu bar item is hidden behind the notch or by macOS.
+    [self showSettings];
+    return NO;
 }
 
 - (MPSettingsWindowController *)activeSettingsWindowController {
@@ -557,7 +567,6 @@
     NSImage *image = [self renderStatusImageWithRows:rows];
     self.lastRenderedRows = rows;
     self.statusItem.length = image.size.width;
-    self.statusItem.button.title = @"";
     self.statusItem.button.image = image;
 }
 

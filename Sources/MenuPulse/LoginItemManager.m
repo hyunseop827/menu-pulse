@@ -5,6 +5,11 @@
 
 static NSString * const MPLegacyLoginItemLabel = @"dev.hyunseop.MenuPulse";
 
+/// A never-registered app can report NotFound instead of NotRegistered.
+static BOOL MPServiceIsUnregistered(SMAppServiceStatus status) {
+    return status == SMAppServiceStatusNotRegistered || status == SMAppServiceStatusNotFound;
+}
+
 @interface MPLoginItemManager ()
 @property(nonatomic, strong) dispatch_queue_t operationQueue;
 @end
@@ -75,7 +80,7 @@ static NSString * const MPLegacyLoginItemLabel = @"dev.hyunseop.MenuPulse";
 
 - (BOOL)performUnregisterModernLoginItem {
     SMAppService *service = SMAppService.mainAppService;
-    if (service.status == SMAppServiceStatusNotRegistered) {
+    if (MPServiceIsUnregistered(service.status)) {
         return YES;
     }
 
@@ -90,7 +95,7 @@ static NSString * const MPLegacyLoginItemLabel = @"dev.hyunseop.MenuPulse";
     static const useconds_t delayMicroseconds = 50000;
 
     for (NSUInteger attempt = 0; attempt < maximumAttempts; attempt += 1) {
-        if (SMAppService.mainAppService.status == SMAppServiceStatusNotRegistered) {
+        if (MPServiceIsUnregistered(SMAppService.mainAppService.status)) {
             return YES;
         }
         if (attempt + 1 < maximumAttempts) {
@@ -117,7 +122,7 @@ static NSString * const MPLegacyLoginItemLabel = @"dev.hyunseop.MenuPulse";
     }
 
     SMAppService *service = SMAppService.mainAppService;
-    if (service.status == SMAppServiceStatusNotRegistered) {
+    if (MPServiceIsUnregistered(service.status)) {
         [service registerAndReturnError:NULL];
     }
 

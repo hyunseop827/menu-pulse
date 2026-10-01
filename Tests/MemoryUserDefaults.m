@@ -62,19 +62,9 @@
     [self setObject:@(value) forKey:defaultName];
 }
 
-- (NSDictionary<NSString *, id> *)dictionaryRepresentation {
-    NSMutableDictionary<NSString *, id> *values = [self.registeredValues mutableCopy];
-    [values addEntriesFromDictionary:self.storedValues];
-    return values;
-}
-
 - (void)removePersistentDomainForName:(NSString *)domainName {
     (void)domainName;
     [self.storedValues removeAllObjects];
-}
-
-- (BOOL)synchronize {
-    return YES;
 }
 
 @end

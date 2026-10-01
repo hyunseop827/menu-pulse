@@ -18,9 +18,6 @@ FOUNDATION_EXPORT const NSTimeInterval MPRefreshSchedulerNoPendingDelay;
 - (NSTimeInterval)monotonicTime;
 @end
 
-@interface MPSystemMonotonicClock : NSObject <MPMonotonicClock>
-@end
-
 typedef void (^MPRefreshDueHandler)(MPRefreshMetric dueMetrics);
 
 @interface MPRefreshScheduler : NSObject

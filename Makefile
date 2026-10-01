@@ -44,9 +44,9 @@ app:
 test:
 	@set -euo pipefail; \
 	test_dir="$$(mktemp -d -t menu-pulse-tests)"; \
-	trap 'rm -r -- "$$test_dir"' EXIT; \
+	trap 'rm -r -- "$$test_dir"; defaults delete MenuPulseUITests >/dev/null 2>&1 || true' EXIT; \
 	trap 'exit 130' INT; trap 'exit 143' TERM; \
-	mkdir -p "$$test_dir/Home/Library/Preferences"; \
+	mkdir -p "$$test_dir/Home"; \
 	xcrun clang $(OBJC_FLAGS) -I Tests -arch "$(TEST_ARCH)" \
 	  Tests/MonitorTests.m Sources/MenuPulse/Monitors.m Sources/MenuPulse/TemperatureReader.m \
 	  -o "$$test_dir/MonitorTests" -framework Foundation -framework IOKit; \
@@ -62,6 +62,7 @@ test:
 	done; \
 	xcrun clang $(OBJC_FLAGS) -I Tests -arch "$(TEST_ARCH)" \
 	  Tests/MenuPulseUITests.m Tests/MemoryUserDefaults.m "$${ui_sources[@]}" \
+	  -Wl,-sectcreate,__TEXT,__info_plist,Tests/MenuPulseUITests-Info.plist \
 	  -o "$$test_dir/MenuPulseUITests" $(FRAMEWORKS); \
 	CFFIXED_USER_HOME="$$test_dir/Home" "$$test_dir/MenuPulseUITests"; \
 	CFFIXED_USER_HOME="$$test_dir/Home" bash Tests/BenchmarkTests.sh
@@ -90,10 +91,13 @@ check:
 verify-app: app
 	@set -euo pipefail; \
 	bin="$(BUILD_DIR)/Menu Pulse.app/Contents/MacOS/MenuPulse"; \
-	[[ "$$(lipo -archs "$$bin")" == arm64 ]]; \
+	[[ "$$(lipo -archs "$$bin")" == arm64 ]] || \
+	  { echo 'Expected an arm64-only executable.' >&2; exit 1; }; \
 	file "$$bin"; \
 	otool -L "$$bin"; \
-	! otool -L "$$bin" | grep -q '/usr/lib/swift'
+	if otool -L "$$bin" | grep -q '/usr/lib/swift'; then \
+	  echo 'Unexpected Swift runtime dependency.' >&2; exit 1; \
+	fi
 
 dmg: verify-app
 	@set -euo pipefail; \

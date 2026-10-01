@@ -1,7 +1,7 @@
 # Menu Pulse
 
 <p align="center">
-  <img src="Packaging/AppIcon.png" alt="Menu Pulse 아이콘" width="96">
+  <img src="docs/images/app-icon.png" alt="Menu Pulse 아이콘" width="96">
 </p>
 
 [English README](README.md)
@@ -9,14 +9,14 @@
 CPU와 RAM 사용량을 Mac 메뉴바에서 한눈에 확인하는 작은 앱입니다. 온도와 디스크 사용량은 필요할 때 켤 수 있습니다.
 
 <p align="center">
-  <img src="menupulse-menubar.png" alt="Menu Pulse 기본 CPU·RAM 표시" width="160">
+  <img src="docs/images/menubar.png" alt="Menu Pulse 기본 CPU·RAM 표시" width="160">
 </p>
 
 ## 다운로드
 
 **[최신 DMG 다운로드](https://github.com/hyunseop827/menu-pulse/releases/latest/download/MenuPulse.dmg)** · 무료 · Apple Silicon · macOS 13 이상
 
-DMG를 열고 **Menu Pulse**를 **응용 프로그램**으로 드래그합니다. 업데이트할 때는 기존 앱을 종료하고 새 DMG의 앱으로 교체합니다. 앱을 사용하기 위해 이 저장소를 내려받거나 보관할 필요는 없습니다.
+DMG를 열고 **Menu Pulse**를 **Applications**(응용 프로그램) 폴더로 드래그합니다. 업데이트할 때는 기존 앱을 종료하고 새 DMG의 앱으로 교체합니다. 앱을 사용하기 위해 이 저장소를 내려받거나 보관할 필요는 없습니다.
 
 **앱은 ad-hoc 서명을 사용하며 Apple 공증을 받지 않았습니다.** 처음 실행할 때 macOS가 차단하면 실행을 시도한 뒤 **시스템 설정 → 개인정보 보호 및 보안 → 그래도 열기**를 선택하세요. [Apple 안내](https://support.apple.com/ko-kr/guide/mac-help/mh40616/mac)를 참고할 수 있습니다.
 
@@ -45,18 +45,18 @@ shasum -a 256 -c SHA256SUMS.txt
 지표를 한두 개 켜면 한 줄에 하나씩 표시합니다. 세 개 이상이면 CPU·RAM은 왼쪽, TEMP·DISK는 오른쪽 열에 표시합니다.
 
 <p align="center">
-  <img src="menupulse-menubar-all.png" alt="Menu Pulse의 CPU·RAM·TEMP·DISK 표시" width="322">
+  <img src="docs/images/menubar-all.png" alt="Menu Pulse의 CPU·RAM·TEMP·DISK 표시" width="322">
 </p>
 
 TEMP는 섭씨와 화씨를 지원하며 앱에서 읽을 수 있는 부품 센서 중 가장 높은 온도를 표시합니다. 배터리와 보정용 센서는 제외합니다. Mac 기종과 macOS 버전에 따라 센서를 읽지 못할 수 있으며, 실패하면 `--`를 표시하고 5분마다 재시도합니다. DISK는 홈 볼륨 사용량을 표시하며, Finder와 같이 시스템이 비울 수 있는 공간도 사용 가능한 공간으로 계산합니다. 남은 디스크 공간과 TEMP 상태 같은 자세한 내용은 메뉴바 항목에 마우스를 올리면 확인할 수 있습니다.
 
-메뉴바 항목을 클릭하면 설정창이 열리며, 설치된 버전과 GitHub 최신 릴리스 링크를 확인할 수 있습니다. 설정창은 **⌘W** 또는 **Esc**로 닫을 수 있고, 다시 열면 마지막 위치에 표시됩니다. 처음 실행하면 로그인 시작 여부를 한 번 묻고, 이후 설정에서 변경할 수 있습니다. **기본값 초기화는 지표 설정을 기본값으로 되돌리고 로그인 시 시작을 켭니다.** 초기화와 종료는 확인창을 표시하며, 종료해도 로그인 설정은 유지됩니다.
+메뉴바 항목을 클릭하면 설정창이 열리며, 설치된 버전과 GitHub 최신 릴리스 링크를 확인할 수 있습니다. 카메라 노치 등에 가려 메뉴바 항목이 보이지 않으면 응용 프로그램 폴더에서 Menu Pulse를 다시 실행하면 설정창이 열립니다. 설정창은 **⌘W** 또는 **Esc**로 닫을 수 있고, 다시 열면 마지막 위치에 표시됩니다. 처음 실행하면 **Open at login**(로그인 시 열기)을 켤지 한 번 묻고, 이후 설정에서 변경할 수 있습니다. **Reset Defaults는 지표 설정을 기본값으로 되돌리고 Open at login을 켭니다.** Reset Defaults와 Quit은 확인창을 표시하며, 종료해도 로그인 설정은 유지됩니다.
 
 <details>
 <summary>설정 화면 보기</summary>
 
 <p align="center">
-  <img src="menupulse-setting.png" alt="Menu Pulse 설정창" width="480">
+  <img src="docs/images/settings.png" alt="Menu Pulse 설정창" width="480">
 </p>
 
 </details>
@@ -72,7 +72,7 @@ TEMP는 섭씨와 화씨를 지원하며 앱에서 읽을 수 있는 부품 센�
 
 ## 삭제
 
-앱 설정에서 **로그인 시 시작**을 끄고 **프로그램 종료**를 선택한 뒤, `/Applications/Menu Pulse.app`을 휴지통으로 옮깁니다.
+설정창에서 **Open at login**을 끄고 **Quit**을 누른 뒤, `/Applications/Menu Pulse.app`을 휴지통으로 옮깁니다. 저장된 설정까지 지우려면 종료한 뒤 `defaults delete dev.hyunseop.MenuPulse`를 실행합니다.
 
 ## 개발
 
@@ -101,14 +101,18 @@ ALL_METRICS=1 CPU_RAM_REFRESH_INTERVAL=1 TEMPERATURE_REFRESH_INTERVAL=1 \
 
 - `report.txt`: 빌드·기기·측정 조건과 결과 요약
 - `samples.txt`: `ps`로 수집한 CPU·RSS 표본
-- `vmmap.txt`: 마지막 메모리 조회 결과, 조회 가능한 경우 저장
+- `vmmap.txt`: 마지막 `vmmap` 출력, 조회하지 못했다면 그 이유
 - `app.log`: 측정한 앱의 출력
 
-저장할 상위 폴더는 `RESULTS_DIR`로 바꿀 수 있습니다. 스크립트가 실행되는지만 짧게 확인하려면 `WARMUP=0 DURATION=10 Scripts/benchmark.sh`를 사용하고, 비교할 때는 충분한 시간 동안 반복 측정하세요.
+`SHOW_CPU`, `SHOW_RAM`, `SHOW_TEMPERATURE`, `SHOW_DISK`(0 또는 1)로 지표를 하나씩 고를 수 있고, `INTERVAL`로 표본 간격(초, 기본 1)을 정할 수 있습니다. 저장할 상위 폴더는 `RESULTS_DIR`로 바꿀 수 있습니다. 스크립트가 실행되는지만 짧게 확인하려면 `WARMUP=0 DURATION=10 Scripts/benchmark.sh`를 사용하고, 비교할 때는 충분한 시간 동안 반복 측정하세요.
 
 CPU 결과는 `ps` 값을 요약한 것입니다. 이 값은 최대 1분의 감쇠 평균이며, 서로 독립적인 1초 구간 측정값은 아닙니다. RSS와 Private dirty는 서로 다른 메모리 지표로 MiB 단위로 구분해 표시하며, Private dirty는 총 메모리 사용량이 아닙니다. 같은 기기·macOS·활성 지표·갱신 주기에서 얻은 결과끼리 비교하세요.
 
-종료 시 임시 빌드·설정과 측정 프로세스는 정리하고 결과는 보존합니다. 설치된 앱의 설정과 로그인 등록은 공유하지 않습니다.
+종료 시 임시 빌드·임시 홈 폴더와 측정 프로세스는 정리하고 결과는 보존합니다. 측정용 빌드는 별도 번들 식별자를 쓰므로 설치된 앱의 설정과 로그인 등록을 공유하지 않습니다.
+
+## AI를 활용한 개발
+
+Menu Pulse는 메인테이너의 검토 아래 AI 코딩 도구를 활용해 개발합니다. 변경을 만들고 검증하는 방식은 [AI를 활용한 개발](docs/AI_DEVELOPMENT.ko.md)에, 앱의 동작 방식은 [Architecture](docs/ARCHITECTURE.md)(영문)에 정리되어 있습니다.
 
 ## 라이선스
 

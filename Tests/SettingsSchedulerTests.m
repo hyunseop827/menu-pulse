@@ -171,7 +171,7 @@ static void MPTestSettingsValidationAndReset(void) {
     MPAssert([[defaults storedObjectForKey:@"temperatureUnit"] isEqual:@"Kelvin"],
              @"reading an unsupported unit should not write to defaults");
 
-    [defaults setBool:YES forKey:@"openAtLogin"];
+    [defaults setBool:YES forKey:@"unrelatedSetting"];
     store.showCPU = NO;
     store.showRAM = NO;
     store.showTemperature = YES;
@@ -195,8 +195,8 @@ static void MPTestSettingsValidationAndReset(void) {
                      @"reset should restore the thirty-second temperature refresh");
     MPAssertInterval(store.diskRefreshIntervalSeconds, 300.0,
                      @"reset should restore the five-minute disk refresh");
-    MPAssert([defaults boolForKey:@"openAtLogin"],
-             @"reset should not change login item preferences");
+    MPAssert([defaults boolForKey:@"unrelatedSetting"],
+             @"reset should only remove metric settings");
     MPAssert(store.hasCompletedOpenAtLoginPrompt,
              @"resetting metric settings should preserve the login prompt marker");
     for (NSString *key in @[@"showCPU", @"showRAM", @"showTemperature", @"showDisk",
