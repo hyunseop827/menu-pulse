@@ -5,16 +5,17 @@
 Menu Pulse is made by Hyunseop Kim with AI coding assistants, including Claude
 Code. AI assistants write and revise the code, tests, scripts, and
 documentation. The maintainer decides what to build, reviews and tries the
-results, and publishes each release.
+results, and says when to ship. CI tags and publishes each release.
 
 ## Roles
 
 - **Maintainer**: sets goals and priorities, makes product decisions, checks
-  builds on a real Mac, and commits, pushes, and releases.
+  builds on a real Mac, and says when to ship ("올려").
 - **AI assistants**: implement changes, write tests and documentation, review
   the code, and prepare version numbers and release notes by following
-  [`AGENTS.md`](../AGENTS.md). They do not commit, tag, push, or publish unless
-  the maintainer asks.
+  [`AGENTS.md`](../AGENTS.md). When the maintainer says to ship, they commit,
+  open a pull request, and merge it once CI passes. They never tag or publish
+  by hand; CI does both.
 
 ## How changes are checked
 
