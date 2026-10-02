@@ -10,11 +10,13 @@ int main(void) {
         // menu bar item. The old copy quits once this one has created
         // NSApplication, so the wait must come after it.
         BOOL relaunchedAfterUpdate = MPWaitForReplacedProcess(NSProcessInfo.processInfo.arguments);
+        NSDictionary<NSString *, NSString *> *environment = NSProcessInfo.processInfo.environment;
         BOOL loginItemMigrationEnabled =
-            ![NSProcessInfo.processInfo.environment[@"MENU_PULSE_DISABLE_LOGIN_ITEM_MIGRATION"]
-                isEqualToString:@"1"];
+            ![environment[@"MENU_PULSE_DISABLE_LOGIN_ITEM_MIGRATION"] isEqualToString:@"1"];
+        BOOL updatesEnabled = ![environment[@"MENU_PULSE_DISABLE_UPDATES"] isEqualToString:@"1"];
         MPMenuPulse *menuPulse = [[MPMenuPulse alloc]
-            initWithLoginItemMigrationEnabled:loginItemMigrationEnabled];
+            initWithLoginItemMigrationEnabled:loginItemMigrationEnabled
+                               updatesEnabled:updatesEnabled];
         [menuPulse start];
         if (relaunchedAfterUpdate) {
             [menuPulse showSettingsAfterLaunch];

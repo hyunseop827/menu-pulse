@@ -18,7 +18,7 @@
 @property(nonatomic, strong) MPCPUMonitor *cpuMonitor;
 @property(nonatomic, strong, nullable) MPTemperatureReader *temperatureReader;
 @property(nonatomic, strong) MPUpdater *updater;
-@property(nonatomic) MPUpdateActivity updateActivity;
+@property(nonatomic) BOOL updatesEnabled;
 @property(nonatomic, strong, nullable) NSNumber *cachedCPU;
 @property(nonatomic, strong, nullable) NSNumber *cachedRAM;
 @property(nonatomic, strong, nullable) NSNumber *cachedTemperature;
@@ -42,15 +42,18 @@
 
 @implementation MPMenuPulse
 
-- (instancetype)initWithLoginItemMigrationEnabled:(BOOL)loginItemMigrationEnabled {
+- (instancetype)initWithLoginItemMigrationEnabled:(BOOL)loginItemMigrationEnabled
+                                    updatesEnabled:(BOOL)updatesEnabled {
     self = [super init];
     if (self) {
+        _updatesEnabled = updatesEnabled;
         _statusItem = [NSStatusBar.systemStatusBar statusItemWithLength:NSVariableStatusItemLength];
         _loginItemManager = [[MPLoginItemManager alloc]
             initWithLegacyMigrationEnabled:loginItemMigrationEnabled];
         _settingsStore = [[MPSettingsStore alloc] init];
         _cpuMonitor = [[MPCPUMonitor alloc] init];
         _updater = [[MPUpdater alloc] init];
+        [self observeUpdater:_updater];
         _lastRenderedRows = @[];
         [_statusItem.button setAccessibilityLabel:@"Menu Pulse"];
         [_statusItem.button setAccessibilityHelp:@"Opens Menu Pulse settings."];
@@ -94,6 +97,15 @@
     }
 }
 
+- (void)applicationDidFinishLaunching:(NSNotification *)notification {
+    (void)notification;
+    // Sparkle starts once the app has launched, so its daily check and any
+    // alert it shows never run before the menu bar item exists.
+    if (self.updatesEnabled) {
+        [self.updater start];
+    }
+}
+
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)sender hasVisibleWindows:(BOOL)flag {
     (void)sender;
     (void)flag;
@@ -108,7 +120,7 @@
         self.settingsWindowController = [[MPSettingsWindowController alloc]
             initWithSettingsStore:self.settingsStore
                           delegate:self];
-        self.settingsWindowController.updateActivity = self.updateActivity;
+        self.settingsWindowController.updateCheckEnabled = self.updater.canCheckForUpdates;
     }
     return self.settingsWindowController;
 }
@@ -152,6 +164,12 @@
 }
 
 - (void)showSettings {
+    // Sparkle's update windows may be hidden behind other apps; the click
+    // that would open Settings brings them forward instead.
+    if (self.updater.showingUpdate) {
+        [self.updater checkForUpdates];
+        return;
+    }
     MPSettingsWindowController *controller = [self activeSettingsWindowController];
     [self refreshLoginStateFromSystem];
     [controller showSettingsWindow];
@@ -279,67 +297,28 @@
 
 - (void)settingsWindowControllerDidRequestUpdateCheck:(MPSettingsWindowController *)controller {
     (void)controller;
-    if (self.updateActivity != MPUpdateActivityIdle) {
-        return;
-    }
-    self.updateActivity = MPUpdateActivityChecking;
+    [self.updater checkForUpdates];
+}
+
+- (void)setUpdater:(MPUpdater *)updater {
+    _updater.stateDidChange = nil;
+    _updater = updater;
+    [self observeUpdater:updater];
+}
+
+- (void)observeUpdater:(MPUpdater *)updater {
     __weak typeof(self) weakSelf = self;
-    [self.updater fetchLatestVersion:^(NSString *latestVersion, NSError *error) {
-        [weakSelf handleLatestVersion:latestVersion error:error];
-    }];
+    updater.stateDidChange = ^{
+        [weakSelf updaterStateDidChange];
+    };
+    [self updaterStateDidChange];
 }
 
-- (void)handleLatestVersion:(nullable NSString *)latestVersion error:(nullable NSError *)error {
-    self.updateActivity = MPUpdateActivityIdle;
-    MPSettingsWindowController *controller = [self activeSettingsWindowController];
-    [NSApp activateIgnoringOtherApps:YES];
-    NSString *version = latestVersion;
-    NSString *currentVersion = self.updater.currentVersion;
-    if (!version) {
-        [controller showUpdateCheckFailedAlertWithError:error];
-    } else if (MPCompareVersions(version, currentVersion) != NSOrderedDescending) {
-        [controller showUpToDateAlertWithVersion:currentVersion];
-    } else if (!self.updater.canReplaceApp) {
-        [controller showManualUpdateAlertWithVersion:version];
-    } else if ([controller runUpdatePromptWithVersion:version currentVersion:currentVersion]) {
-        [self installUpdateWithVersion:version];
-    }
-    [self releaseSettingsWindowControllerIfHidden];
-}
-
-- (void)installUpdateWithVersion:(NSString *)version {
-    self.updateActivity = MPUpdateActivityInstalling;
-    __weak typeof(self) weakSelf = self;
-    [self.updater installVersion:version completion:^(NSError *installError) {
-        MPMenuPulse *strongSelf = weakSelf;
-        if (!strongSelf) {
-            return;
-        }
-        if (installError) {
-            strongSelf.updateActivity = MPUpdateActivityIdle;
-            [[strongSelf activeSettingsWindowController]
-                showUpdateFailedAlertWithError:installError version:version];
-            [strongSelf releaseSettingsWindowControllerIfHidden];
-            return;
-        }
-        [strongSelf.updater relaunch:^(NSError *relaunchError) {
-            MPMenuPulse *relaunchingSelf = weakSelf;
-            if (!relaunchError) {
-                [relaunchingSelf.refreshScheduler stop];
-                [NSApp terminate:nil];
-                return;
-            }
-            relaunchingSelf.updateActivity = MPUpdateActivityIdle;
-            [[relaunchingSelf activeSettingsWindowController]
-                showRelaunchFailedAlertWithVersion:version];
-            [relaunchingSelf releaseSettingsWindowControllerIfHidden];
-        }];
-    }];
-}
-
-- (void)setUpdateActivity:(MPUpdateActivity)updateActivity {
-    _updateActivity = updateActivity;
-    self.settingsWindowController.updateActivity = updateActivity;
+- (void)updaterStateDidChange {
+    self.settingsWindowController.updateCheckEnabled = self.updater.canCheckForUpdates;
+    [self.statusItem.button setAccessibilityHelp:self.updater.showingUpdate
+        ? @"Shows the Menu Pulse update." : @"Opens Menu Pulse settings."];
+    [self updateStatusImage];
 }
 
 - (void)settingsWindowControllerDidCloseWindow:(MPSettingsWindowController *)controller {
@@ -726,6 +705,11 @@
     BOOL showDisk = self.showDisk;
 
     NSMutableArray<NSString *> *lines = [NSMutableArray arrayWithObject:@"Menu Pulse"];
+    NSString *pendingUpdateVersion = self.updater.pendingUpdateVersion;
+    if (pendingUpdateVersion) {
+        [lines addObject:[NSString stringWithFormat:@"Menu Pulse %@ is available.",
+                          pendingUpdateVersion]];
+    }
     if (showCPU || showRAM) {
         NSString *interval = MPIntervalDescription(self.cpuRAMRefreshIntervalSeconds);
         if (showCPU) {
@@ -767,7 +751,7 @@
     NSString *loginState = self.cachedLoginRequiresApproval
         ? @"Needs approval" : (self.cachedLoginEnabled ? @"On" : @"Off");
     [lines addObject:[NSString stringWithFormat:@"Open at login: %@", loginState]];
-    [lines addObject:@"Click to open settings"];
+    [lines addObject:self.updater.showingUpdate ? @"Click to show the update" : @"Click to open settings"];
     return [lines componentsJoinedByString:@"\n"];
 }
 

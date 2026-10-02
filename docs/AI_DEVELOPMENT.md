@@ -21,9 +21,9 @@ results, and says when to ship. CI tags and publishes each release.
 
 - **Compiler and analyzer**: every warning is an error, and any Clang static
   analysis finding fails `make check`.
-- **Tests**: `make check` runs four test executables and the benchmark tests.
-  CI runs the same checks on pull requests and on pushes to `main`, before a
-  release is published.
+- **Tests**: `make check` runs four test executables, checks of the built app
+  bundle, and the benchmark tests. CI runs the same checks on pull requests and
+  on pushes to `main`, before a release is published.
 - **Reviews**: several independent AI reviewers examine the code from different
   angles, such as correctness, unused code, performance, and documentation. Other
   agents then try to refute each finding, and only confirmed issues are fixed.
@@ -41,6 +41,13 @@ results, and says when to ship. CI tags and publishes each release.
 - The app is ad-hoc signed and not notarized by Apple.
 
 Please report problems on [GitHub Issues](https://github.com/hyunseop827/menu-pulse/issues).
+
+## Work log
+
+- **1.8.0**: at the maintainer's request, updates moved from the app's own
+  updater to Sparkle 2, set up the same way as in the maintainer's other apps: a
+  daily check, installation only when the user chooses, and EdDSA-signed
+  updates whose private key only the maintainer holds.
 
 ## Working on Menu Pulse with an AI assistant
 

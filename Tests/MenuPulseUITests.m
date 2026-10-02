@@ -29,7 +29,8 @@ static NSUInteger MPLegacyMigrationCallCount = 0;
 @property(nonatomic) BOOL screensAsleep;
 @property(nonatomic) BOOL sessionInactive;
 @property(nonatomic, strong) MPUpdater *updater;
-@property(nonatomic) MPUpdateActivity updateActivity;
+@property(nonatomic) BOOL updatesEnabled;
+- (void)applicationDidFinishLaunching:(NSNotification *)notification;
 - (MPSettingsWindowController *)activeSettingsWindowController;
 - (void)showSettings;
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)sender hasVisibleWindows:(BOOL)flag;
@@ -269,52 +270,45 @@ static void MPCompleteRead(MPFakeTemperatureReader *reader,
 @end
 
 @interface MPFakeUpdater : MPUpdater
-- (instancetype)init;
-@property(nonatomic, copy, nullable) NSString *latestVersion;
-@property(nonatomic, strong, nullable) NSError *checkError;
-@property(nonatomic) BOOL replaceable;
-@property(nonatomic) BOOL holdsCheck;
-@property(nonatomic, copy, nullable) MPLatestVersionCompletion pendingCheck;
+@property(nonatomic) BOOL fakeCanCheckForUpdates;
+@property(nonatomic, copy, nullable) NSString *fakePendingUpdateVersion;
+@property(nonatomic) BOOL fakeShowingUpdate;
+@property(nonatomic) NSUInteger startCount;
 @property(nonatomic) NSUInteger checkCount;
-@property(nonatomic, strong, nullable) NSError *installError;
-@property(nonatomic, copy, nullable) NSString *installedVersion;
-@property(nonatomic, strong, nullable) NSError *relaunchError;
-@property(nonatomic) NSUInteger relaunchCount;
 @end
 
 @implementation MPFakeUpdater
-- (instancetype)init {
-    NSURL *unusedURL = [NSURL fileURLWithPath:@"/nonexistent" isDirectory:YES];
-    self = [super initWithAppURL:[NSURL fileURLWithPath:@"/nonexistent/Menu Pulse.app"]
-                bundleIdentifier:@"dev.hyunseop.MenuPulse.UITests"
-                  currentVersion:@"9.8.7"
-                latestReleaseURL:unusedURL
-                 downloadBaseURL:unusedURL];
-    if (self) {
-        _replaceable = YES;
-    }
-    return self;
+- (void)start {
+    self.startCount += 1;
 }
-- (BOOL)canReplaceApp {
-    return self.replaceable;
-}
-- (void)fetchLatestVersion:(MPLatestVersionCompletion)completion {
+- (void)checkForUpdates {
     self.checkCount += 1;
-    if (self.holdsCheck) {
-        self.pendingCheck = completion;
-        return;
+}
+- (BOOL)canCheckForUpdates {
+    return self.fakeCanCheckForUpdates;
+}
+- (nullable NSString *)pendingUpdateVersion {
+    return self.fakePendingUpdateVersion;
+}
+- (BOOL)showingUpdate {
+    return self.fakeShowingUpdate;
+}
+- (void)setFakeCanCheckForUpdates:(BOOL)canCheck {
+    _fakeCanCheckForUpdates = canCheck;
+    if (self.stateDidChange) {
+        self.stateDidChange();
     }
-    completion(self.latestVersion, self.checkError);
 }
-- (void)installVersion:(NSString *)version completion:(MPUpdateCompletion)completion {
-    self.installedVersion = version;
-    completion(self.installError);
+- (void)setFakeShowingUpdate:(BOOL)showing {
+    _fakeShowingUpdate = showing;
+    if (self.stateDidChange) {
+        self.stateDidChange();
+    }
 }
-- (void)relaunch:(MPUpdateCompletion)completion {
-    self.relaunchCount += 1;
-    // A successful relaunch would quit the test, so only failures complete.
-    if (self.relaunchError) {
-        completion(self.relaunchError);
+- (void)setFakePendingUpdateVersion:(nullable NSString *)version {
+    _fakePendingUpdateVersion = [version copy];
+    if (self.stateDidChange) {
+        self.stateDidChange();
     }
 }
 @end
@@ -387,7 +381,9 @@ static NSUserDefaults *MPMakeIsolatedDefaults(void) {
 
 static MPMenuPulse *MPMakePulse(NSUserDefaults *defaults,
                                 MPFakeLoginItemManager **managerOut) {
-    MPMenuPulse *pulse = [[MPTestMenuPulse alloc] initWithLoginItemMigrationEnabled:NO];
+    MPMenuPulse *pulse = [[MPTestMenuPulse alloc] initWithLoginItemMigrationEnabled:NO
+                                                                updatesEnabled:NO];
+    pulse.updater = [[MPFakeUpdater alloc] init];
     pulse.settingsStore = [[MPSettingsStore alloc] initWithUserDefaults:defaults];
     MPFakeLoginItemManager *manager = [[MPFakeLoginItemManager alloc] init];
     pulse.loginItemManager = manager;
@@ -689,18 +685,12 @@ static void MPTestSettingsWindowControls(void) {
     [controller checkForUpdatesPressed:nil];
     MPAssert(delegate.updateCheckCount == 1,
              @"Check for Updates should ask orchestration to check only on click");
-    controller.updateActivity = MPUpdateActivityChecking;
-    MPAssert([controller.updateButton.title isEqualToString:@"Checking for Updates…"] &&
-             !controller.updateButton.enabled,
-             @"the update button should show progress and ignore clicks while checking");
-    controller.updateActivity = MPUpdateActivityInstalling;
-    MPAssert([controller.updateButton.title isEqualToString:@"Updating…"] &&
-             !controller.updateButton.enabled,
-             @"the update button should show progress while installing");
-    controller.updateActivity = MPUpdateActivityIdle;
+    controller.updateCheckEnabled = NO;
     MPAssert([controller.updateButton.title isEqualToString:@"Check for Updates…"] &&
-             controller.updateButton.enabled,
-             @"the update button should return to its normal title");
+             !controller.updateButton.enabled,
+             @"the update button should ignore clicks while Sparkle is busy");
+    controller.updateCheckEnabled = YES;
+    MPAssert(controller.updateButton.enabled, @"the update button should be enabled again");
     MPAssert(controller.window.isVisible, @"show should display the settings window");
     [controller closePressed:nil];
     MPAssert(!controller.window.isVisible && delegate.closeCount == 1,
@@ -1208,133 +1198,71 @@ static void MPTestReopenShowsSettings(void) {
 
 static void MPTestUpdateFlow(void) {
     MPMenuPulse *pulse = MPMakePulse(MPMakeIsolatedDefaults(), NULL);
-    MPFakeUpdater *updater = [[MPFakeUpdater alloc] init];
-    pulse.updater = updater;
+    MPFakeUpdater *updater = (MPFakeUpdater *)pulse.updater;
+    [pulse applicationDidFinishLaunching:[NSNotification notificationWithName:@"test" object:nil]];
+    MPAssert(updater.startCount == 0,
+             @"Sparkle should not start when updates are disabled for tests and benchmarks");
+    pulse.updatesEnabled = YES;
+    [pulse applicationDidFinishLaunching:[NSNotification notificationWithName:@"test" object:nil]];
+    MPAssert(updater.startCount == 1, @"Sparkle should start once the app has launched");
+
     MPSettingsWindowController *controller = [pulse activeSettingsWindowController];
-    __block NSAlert *capturedAlert = nil;
-    __block NSUInteger alertCount = 0;
-    __block NSModalResponse response = NSAlertSecondButtonReturn;
-    controller.alertRunner = ^NSModalResponse(NSAlert *alert) {
-        capturedAlert = alert;
-        alertCount += 1;
-        return response;
-    };
-    __block NSURL *openedURL = nil;
-    controller.urlOpener = ^BOOL(NSURL *url) {
-        openedURL = url;
-        return YES;
-    };
-    // A visible window keeps this controller and its test alert runner.
-    [controller showSettingsWindow];
-    NSString *releasePage = @"https://github.com/hyunseop827/menu-pulse/releases/latest";
+    MPAssert(!controller.updateButton.enabled,
+             @"Check for Updates should be disabled until Sparkle can check");
+    updater.fakeCanCheckForUpdates = YES;
+    MPAssert(controller.updateButton.enabled,
+             @"Check for Updates should follow Sparkle's canCheckForUpdates");
+    [controller checkForUpdatesPressed:nil];
+    MPAssert(updater.checkCount == 1, @"Check for Updates should start Sparkle's check");
 
-    updater.latestVersion = @"9.8.7";
-    [pulse settingsWindowControllerDidRequestUpdateCheck:controller];
-    MPAssert([capturedAlert.messageText isEqualToString:@"Menu Pulse Is Up to Date"] &&
-             [capturedAlert.informativeText isEqualToString:@"Version 9.8.7 is the latest version."],
-             @"the latest version should show a single up-to-date message");
-    MPAssert(capturedAlert.buttons.count == 1 &&
-             [capturedAlert.buttons[0].title isEqualToString:@"OK"] &&
-             [capturedAlert.buttons[0].keyEquivalent isEqualToString:@"\r"],
-             @"the up-to-date message should only offer OK");
-    updater.latestVersion = @"9.8.6";
-    [pulse settingsWindowControllerDidRequestUpdateCheck:controller];
-    MPAssert([capturedAlert.messageText isEqualToString:@"Menu Pulse Is Up to Date"] &&
-             !updater.installedVersion && pulse.updateActivity == MPUpdateActivityIdle,
-             @"an older published version should never be installed");
-
-    updater.latestVersion = @"9.10.0";
-    response = NSAlertSecondButtonReturn;
-    [pulse settingsWindowControllerDidRequestUpdateCheck:controller];
-    MPAssert([capturedAlert.messageText isEqualToString:@"Update to Menu Pulse 9.10.0?"] &&
-             [capturedAlert.informativeText containsString:@"You have version 9.8.7."] &&
-             [capturedAlert.informativeText containsString:@"restart"],
-             @"a newer version should ask before updating");
-    MPAssert([capturedAlert.buttons[0].title isEqualToString:@"Update"] &&
-             [capturedAlert.buttons[1].title isEqualToString:@"Not Now"] &&
-             [capturedAlert.buttons[0].keyEquivalent isEqualToString:@"\r"] &&
-             [capturedAlert.buttons[1].keyEquivalent isEqualToString:@"\e"],
-             @"Update should be the default and Not Now should handle Escape");
-    MPAssert(NSEqualSizes(capturedAlert.icon.size, NSMakeSize(64, 64)),
-             @"update alerts should show the badged app icon");
-    MPAssert(!updater.installedVersion && pulse.updateActivity == MPUpdateActivityIdle &&
-             controller.updateButton.enabled,
-             @"Not Now should leave the app unchanged");
-
-    updater.replaceable = NO;
-    response = NSAlertFirstButtonReturn;
-    [pulse settingsWindowControllerDidRequestUpdateCheck:controller];
-    MPAssert([capturedAlert.messageText isEqualToString:@"Menu Pulse 9.10.0 Is Available"] &&
-             [capturedAlert.buttons[0].title isEqualToString:@"Open Download Page"] &&
-             !updater.installedVersion &&
-             [openedURL.absoluteString isEqualToString:releasePage],
-             @"an app that cannot replace itself should offer the download page instead");
-    updater.replaceable = YES;
-    openedURL = nil;
-
-    updater.installError = [NSError errorWithDomain:@"Test" code:1 userInfo:@{
-        NSLocalizedDescriptionKey: @"The download didn't match its published checksum.",
-    }];
-    [pulse settingsWindowControllerDidRequestUpdateCheck:controller];
-    MPAssert([updater.installedVersion isEqualToString:@"9.10.0"] &&
-             [capturedAlert.messageText isEqualToString:@"Couldn't Update Menu Pulse"] &&
-             [capturedAlert.informativeText hasPrefix:
-                 @"The download didn't match its published checksum."] &&
-             [capturedAlert.buttons[1].title isEqualToString:@"Close"],
-             @"a failed install should explain why and offer the download page");
-    MPAssert([openedURL.absoluteString isEqualToString:releasePage] &&
-             updater.relaunchCount == 0 && pulse.updateActivity == MPUpdateActivityIdle,
-             @"a failed install should not relaunch");
-    updater.installError = nil;
-
-    updater.relaunchError = [NSError errorWithDomain:@"Test" code:2 userInfo:nil];
-    [pulse settingsWindowControllerDidRequestUpdateCheck:controller];
-    MPAssert(updater.relaunchCount == 1 &&
-             [capturedAlert.messageText isEqualToString:@"Restart Menu Pulse to Finish Updating"] &&
-             pulse.updateActivity == MPUpdateActivityIdle,
-             @"an installed update that cannot restart should ask the user to reopen Menu Pulse");
-    updater.relaunchError = nil;
-
-    updater.checkError = [NSError errorWithDomain:@"Test" code:3 userInfo:@{
-        NSLocalizedDescriptionKey: @"The Internet connection appears to be offline.",
-    }];
-    updater.latestVersion = nil;
-    [pulse settingsWindowControllerDidRequestUpdateCheck:controller];
-    MPAssert([capturedAlert.messageText isEqualToString:@"Couldn't Check for Updates"] &&
-             [capturedAlert.informativeText isEqualToString:
-                 @"The Internet connection appears to be offline."] &&
-             capturedAlert.buttons.count == 1,
-             @"a failed check should show its reason with only OK");
-    updater.checkError = nil;
-
-    updater.holdsCheck = YES;
-    updater.latestVersion = @"9.8.7";
-    NSUInteger checksBefore = updater.checkCount;
-    NSUInteger alertsBefore = alertCount;
-    [pulse settingsWindowControllerDidRequestUpdateCheck:controller];
-    [pulse settingsWindowControllerDidRequestUpdateCheck:controller];
-    MPAssert(updater.checkCount == checksBefore + 1 &&
-             [controller.updateButton.title isEqualToString:@"Checking for Updates…"],
-             @"only one check should run at a time, and Settings should show it");
-    [controller closeSettingsWindow];
+    updater.fakeCanCheckForUpdates = NO;
+    MPAssert(!controller.updateButton.enabled, @"a running check should disable the button");
     pulse.settingsWindowController = nil;
     MPSettingsWindowController *reopened = [pulse activeSettingsWindowController];
-    MPAssert(reopened.updateActivity == MPUpdateActivityChecking && !reopened.updateButton.enabled,
-             @"Settings reopened during a check should still show it");
-    reopened.alertRunner = controller.alertRunner;
-    [reopened showSettingsWindow];
-    updater.pendingCheck(@"9.8.7", nil);
-    MPAssert(alertCount == alertsBefore + 1 && reopened.updateButton.enabled &&
-             [capturedAlert.messageText isEqualToString:@"Menu Pulse Is Up to Date"],
-             @"a finished check should report once and enable the button again");
+    MPAssert(!reopened.updateButton.enabled,
+             @"Settings opened during a check should show the button disabled");
+    updater.fakeCanCheckForUpdates = YES;
+    MPAssert(reopened.updateButton.enabled, @"a finished check should enable the button again");
 
-    updater.holdsCheck = NO;
-    updater.latestVersion = @"9.10.0";
-    [pulse settingsWindowControllerDidRequestUpdateCheck:reopened];
-    MPAssert(updater.relaunchCount == 2 && pulse.updateActivity == MPUpdateActivityInstalling &&
-             [reopened.updateButton.title isEqualToString:@"Updating…"],
-             @"a successful install should relaunch and keep the button disabled");
+    // A scheduled check's window can open behind other apps: the menu bar item
+    // says so, and clicking it brings the window forward instead of Settings.
     [reopened closeSettingsWindow];
+    pulse.settingsWindowController = nil;
+    NSUInteger checksBeforeReminder = updater.checkCount;
+    updater.fakeShowingUpdate = YES;
+    updater.fakePendingUpdateVersion = @"9.9.0";
+    MPAssert([[pulse statusTooltip] containsString:@"Menu Pulse 9.9.0 is available."] &&
+             [[pulse statusTooltip] hasSuffix:@"Click to show the update"] &&
+             [[pulse.statusItem.button accessibilityHelp] isEqualToString:
+                 @"Shows the Menu Pulse update."],
+             @"the tooltip and VoiceOver help should say a click shows the update");
+    [pulse showSettings];
+    MPAssert(updater.checkCount == checksBeforeReminder + 1 && !pulse.settingsWindowController,
+             @"clicking the menu bar item should bring the waiting update forward");
+    updater.fakePendingUpdateVersion = nil;
+    MPAssert(![[pulse statusTooltip] containsString:@"is available"],
+             @"the reminder should disappear once the user has seen the update");
+    [pulse showSettings];
+    MPAssert(updater.checkCount == checksBeforeReminder + 2 && !pulse.settingsWindowController,
+             @"until Sparkle's session ends, clicks should bring its windows forward");
+    updater.fakeShowingUpdate = NO;
+    MPAssert([[pulse statusTooltip] hasSuffix:@"Click to open settings"] &&
+             [[pulse.statusItem.button accessibilityHelp] isEqualToString:
+                 @"Opens Menu Pulse settings."],
+             @"after the update session the menu bar item should open Settings again");
+    [pulse showSettings];
+    MPAssert(updater.checkCount == checksBeforeReminder + 2 &&
+             pulse.settingsWindowController.window.isVisible,
+             @"without a waiting update the menu bar item should open Settings");
+    reopened = pulse.settingsWindowController;
+    [reopened closeSettingsWindow];
+
+    MPFakeUpdater *replacement = [[MPFakeUpdater alloc] init];
+    replacement.fakeCanCheckForUpdates = YES;
+    pulse.updater = replacement;
+    updater.fakeCanCheckForUpdates = NO;
+    MPAssert(reopened.updateButton.enabled,
+             @"a replaced updater should no longer change the button");
 }
 
 static void MPTestStaleTemperatureFailurePreservesCooldown(void) {
