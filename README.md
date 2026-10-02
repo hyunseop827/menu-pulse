@@ -114,7 +114,7 @@ The temporary build, temporary home folder, and measured process are cleaned up 
 
 ## AI-assisted development
 
-Menu Pulse is developed with AI coding assistants under the maintainer's review. See [AI-assisted development](docs/AI_DEVELOPMENT.md) for how changes are made and checked, and [Architecture](docs/ARCHITECTURE.md) for how the app works.
+Menu Pulse is developed with AI coding agents, including Claude Code, under the direction of Hyunseop Kim, who decides what to build and when to ship. The agents follow the project's rules in [`AGENTS.md`](AGENTS.md). See [AI-assisted development](docs/AI_DEVELOPMENT.md) for how changes are made and checked, and [Architecture](docs/ARCHITECTURE.md) for how the app works.
 
 ## License
 

@@ -114,7 +114,7 @@ CPU 결과는 `ps` 값을 요약한 것입니다. 이 값은 최대 1분의 감�
 
 ## AI를 활용한 개발
 
-Menu Pulse는 메인테이너의 검토 아래 AI 코딩 도구를 활용해 개발합니다. 변경을 만들고 검증하는 방식은 [AI를 활용한 개발](docs/AI_DEVELOPMENT.ko.md)에, 앱의 동작 방식은 [Architecture](docs/ARCHITECTURE.md)(영문)에 정리되어 있습니다.
+Menu Pulse는 Hyunseop Kim이 무엇을 만들고 언제 내보낼지 정하고, Claude Code를 비롯한 AI 코딩 에이전트가 그 지시에 따라 개발합니다. 에이전트는 [`AGENTS.md`](AGENTS.md)(영문)에 정리된 프로젝트 규칙을 따릅니다. 변경을 만들고 검증하는 방식은 [AI를 활용한 개발](docs/AI_DEVELOPMENT.ko.md)에, 앱의 동작 방식은 [Architecture](docs/ARCHITECTURE.md)(영문)에 정리되어 있습니다.
 
 ## 라이선스
 
