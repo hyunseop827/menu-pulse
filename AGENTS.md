@@ -16,29 +16,46 @@ together.
   `RefreshScheduler`, `Monitors`, `TemperatureReader`, `SettingsStore`,
   `SettingsWindowController`, `LoginItemManager`, and `Updater` each own one
   concern.
-- `Tests/`: four Objective-C test executables and `BenchmarkTests.sh`.
+- `Tests/`: four Objective-C test executables, `AppBundleTests.sh`, and
+  `BenchmarkTests.sh`.
 - `Scripts/benchmark.sh`: the only script; it builds and measures a separate copy.
-- `Packaging/`: app bundle inputs only (`Info.plist`, `AppIcon.icns`).
+- `Packaging/`: app bundle inputs only (`Info.plist`, `MenuPulse.entitlements`,
+  `AppIcon.icns`, `ThirdPartyNotices.txt`).
 - `docs/`: architecture and AI-development notes; `docs/images/` holds README images.
 - `.github/workflows/`: CI (`ci.yml`) and publishing (`release.yml`);
   `.github/release-notes.md` holds the upcoming release's notes, or the last
-  release's until a branch starts a new version.
+  release's until a branch starts a new version. `.github/scripts/` holds the
+  release tools: `release-plan.py` (the release decision), `make-appcast.sh` and
+  `ed25519-verify.swift` (the Sparkle feed), and `check-release-tools.sh`, which
+  `make check` runs to exercise them with RFC 8032 test vectors and no key.
 
 ## Build and test
 
 - `make app` builds `build/release/Menu Pulse.app`; `make check` runs script
   syntax checks, the version and release-notes check, static analysis, all
-  tests, and the app architecture and signature check. `make dmg` packages it
-  as `MenuPulse.dmg` and `MenuPulse.zip` and lists both in `SHA256SUMS.txt`.
-  The in-app updater (ZIP, checksums) and the README download links (DMG)
-  depend on these names, so do not rename them.
+  tests, the app architecture check, and `Tests/AppBundleTests.sh`. `make dmg`
+  packages it as `MenuPulse.dmg`, `MenuPulse-X.Y.Z.dmg` and `MenuPulse.zip` and
+  lists them in `SHA256SUMS.txt`. Sparkle's feed points at the versioned DMG,
+  Menu Pulse 1.7.0's own updater downloads the ZIP and checksums, and the
+  README links to `MenuPulse.dmg`, so do not rename them.
 - Compiler flags are strict: ARC, `-Wall -Wextra -Werror`,
   `-Wnullable-to-nonnull-conversion`, and a macOS 13.0 deployment target. The app
-  builds for arm64 only, links only system frameworks (Sparkle, if the owner asks
-  for it, is the exception), and must not need the Swift runtime.
+  builds for arm64 only, links only system frameworks and Sparkle, and must not
+  need the Swift runtime (Sparkle is Objective-C).
+- `make sparkle` downloads Sparkle's official archive once, checks it against
+  `SPARKLE_SHA256` in the `Makefile`, and unpacks it to `build/sparkle`. `make
+  app` embeds the framework in `Contents/Frameworks` without its XPC services,
+  thins it to arm64, and signs it ad hoc with the hardened runtime, inside out;
+  the app's only entitlement lets it load that framework, so `make verify-app`
+  also requires `@executable_path/../Frameworks` to be the only `LC_RPATH`.
+  `APP_BUILD` sets `CFBundleVersion`.
+- `Tests/AppBundleTests.sh` checks the built app's Sparkle settings, framework,
+  and signatures. Its last check fails when `SUPublicEDKey` is not an EdDSA
+  public key (for example the placeholder), so such a build never passes
+  `make check` or CI.
 - The `Makefile` lists the sources of `MonitorTests`, `SettingsSchedulerTests`,
-  and `UpdaterTests` explicitly. `UpdaterTests` builds signed test apps, zips
-  them, and installs them from `file://` URLs, so it needs no network.
+  and `UpdaterTests` explicitly. `UpdaterTests` checks the relaunch argument that
+  1.7.0's updater passes and that `MPUpdater` does not start Sparkle by itself.
   `MenuPulseUITests` compiles every source except `main.m` and embeds
   `Tests/MenuPulseUITests-Info.plist`, so its version label reads 9.8.7. Update
   the `Makefile` when a test needs another source file.
@@ -56,9 +73,11 @@ installed app's preferences and login item. To try a build, follow
 
 - Build with `BUNDLE_ID=dev.hyunseop.MenuPulse.<Suffix>` and a separate
   `BUILD_DIR`.
-- Start the executable with `CFFIXED_USER_HOME=<temporary folder>` and
-  `MENU_PULSE_DISABLE_LOGIN_ITEM_MIGRATION=1`. The temporary home keeps the
-  legacy login-item cleanup and the DISK reading away from the owner's home.
+- Start the executable with `CFFIXED_USER_HOME=<temporary folder>`,
+  `MENU_PULSE_DISABLE_LOGIN_ITEM_MIGRATION=1`, and
+  `MENU_PULSE_DISABLE_UPDATES=1`. The temporary home keeps the legacy
+  login-item cleanup and the DISK reading away from the owner's home; the last
+  keeps Sparkle from checking the feed or showing its windows.
 - Pass settings as `-key value` arguments, including
   `-hasCompletedOpenAtLoginPrompt YES` so the Open at login prompt does not
   appear.
@@ -66,16 +85,18 @@ installed app's preferences and login item. To try a build, follow
 
 Do not install the app, change its login item, or quit the owner's running copy
 unless the owner asks. Do not test Check for Updates on the installed copy: it
-replaces the app in place. Test `MPUpdater` with its designated initializer,
-local `file://` URLs, and an app under a temporary folder with a suffixed
-bundle identifier.
+replaces the app in place. To check that 1.7.0 can still install a new build,
+run 1.7.0's `Updater.m` (from the `v1.7.0` tag) against `dist/MenuPulse.zip`
+through local `file://` URLs and a copy of the app under a temporary folder,
+without relaunching it.
 
 ## Code and documentation conventions
 
 - Match the surrounding code: `MP` prefixes, `NS_ASSUME_NONNULL` headers,
   explicit nullability, and short comments that explain why.
-- Do not add third-party dependencies. Sparkle 2 for in-app updates is the one
-  planned exception; add it only when the owner asks.
+- Do not add third-party dependencies; Sparkle 2 for in-app updates is the only
+  one. Change its version only together with `SPARKLE_SHA256` in the `Makefile`,
+  `Packaging/ThirdPartyNotices.txt`, `Tests/AppBundleTests.sh`, and the READMEs.
 - `README.md` and `README.ko.md` mirror each other section by section; change
   them together. The app's labels are English, so the Korean README names them in
   English, for example **Open at login**.
@@ -105,20 +126,23 @@ This is the owner's view of the whole flow; the steps below give the details.
 
 | Item | Value |
 | --- | --- |
-| Version | `CFBundleShortVersionString` and `CFBundleVersion` in `Packaging/Info.plist`, both the same `X.Y.Z` |
+| Version | `CFBundleShortVersionString` in `Packaging/Info.plist` (`X.Y.Z`) |
+| Build number | `CFBundleVersion` in `Packaging/Info.plist` stays `1` (an integer string); the released app gets the CI run number (`APP_BUILD` in `release.yml`, set by `make dmg APP_BUILD=…`), which grows with every run. Sparkle compares it: the release job stops before the tag if it is not higher than `sparkle:version` in the published `appcast.xml`, or if that feed is missing although a release with Sparkle is out |
+| Signing | Ad hoc with the hardened runtime and one entitlement, `com.apple.security.cs.disable-library-validation`, so that the app can load the ad-hoc signed `Sparkle.framework`. `make app` removes Sparkle's `XPCServices` (the app is not sandboxed), thins the framework to arm64, and signs `Autoupdate`, `Updater.app` and the framework from the inside out with `--options runtime`, then the app; `make verify-app` and `Tests/AppBundleTests.sh` check the result, including that `@executable_path/../Frameworks` is the only `LC_RPATH`. The DMG is unsigned and nothing is notarized |
 | App files (changing them needs a new version) | `Sources/`, `Packaging/`, `Makefile` |
-| Checks before shipping | `make check`; the release checks below; `make dmg` when packaging or the updater changes; for workflow changes, `actionlint` and a local dry run of the release decision that publishes nothing (for example the "Check version and release state" script from `release.yml`, run against this repository's real tags and releases with `GITHUB_OUTPUT` set to a temporary file, `RUNNER_TEMP` to a temporary folder, `GITHUB_REPOSITORY=hyunseop827/menu-pulse` and `GITHUB_SHA=$(git rev-parse HEAD)`; for a version that is not released yet it stops at the `merge-base --is-ancestor` check, which is expected before the merge), described in the pull request body. Ask the owner before creating any repository or pushing anything just to test a workflow. |
-| Pull request checks in CI | `make check` |
-| Release assets | `MenuPulse.dmg`, `MenuPulse.zip`, `SHA256SUMS.txt`; the in-app updater downloads the last two from the release tagged `vX.Y.Z` and expects `Menu Pulse.app` inside the ZIP |
-| In-app updates | Not Sparkle: `MPUpdater` checks GitHub only when the user clicks Check for Updates…, so step 9 does not apply yet |
+| Checks before shipping | `make check`; the release checks below; `make dmg` when packaging or the updater changes; for workflow changes, `actionlint` and a local dry run of the release decision that publishes nothing (`python3 .github/scripts/release-plan.py` after `git fetch --tags origin`, with `GITHUB_OUTPUT` set to a temporary file and `RUNNER_TEMP` to a temporary folder; outside CI it skips the `merge-base --is-ancestor` check), described in the pull request body. Ask the owner before creating any repository or pushing anything just to test a workflow. |
+| Pull request checks in CI | `python3 .github/scripts/release-plan.py --check` (version, notes, and the update key against the published releases) and `make check` (which includes `.github/scripts/check-release-tools.sh`) |
+| Release assets | `MenuPulse.dmg` (README link), `MenuPulse-X.Y.Z.dmg` (Sparkle download), `appcast.xml` (Sparkle feed, one item), `MenuPulse.zip` and `SHA256SUMS.txt` (Menu Pulse 1.7.0's own updater downloads these two from the release tagged `vX.Y.Z` and expects `Menu Pulse.app` inside the ZIP; keep them while 1.7.0 copies may still update) |
+| In-app updates | Sparkle 2.10.0 (`Sources/MenuPulse/Updater.m`), set as step 9 says: `SUFeedURL` `https://github.com/hyunseop827/menu-pulse/releases/latest/download/appcast.xml`, `SUEnableAutomaticChecks` true, `SUAllowsAutomaticUpdates` false, `SUVerifyUpdateBeforeExtraction` true, no `SUScheduledCheckInterval` (the default interval). The user checks with **Check for Updates…** in Settings; scheduled updates that open behind other apps are announced in the menu bar item's tooltip, and clicking the item brings Sparkle's window forward. `SUPublicEDKey` is the owner's key `MEu1gdzi0/SCI+zd83puPho7MJ7eAvpEgio/UB3fW20=` (keychain account `menu-pulse`, created 2026-10-02); its private key is the repository secret `SPARKLE_PRIVATE_KEY`, which only the owner holds. Never change or regenerate it: copies released with it accept only updates signed with that key, and `release-plan.py` refuses a different one once a release has shipped with it. A build without a valid key (such as the placeholder `PASTE_PUBLIC_KEY_FROM_generate_keys`) starts no updater (the button stays visible but disabled), fails `Tests/AppBundleTests.sh`, and stops a release at its key check. The release job signs the versioned DMG with that secret (`ci.yml` passes it by name), writes `appcast.xml` with `.github/scripts/make-appcast.sh` and verifies it against `SUPublicEDKey` before tagging, then downloads the assets and the latest feed again and checks them; the feed itself is unsigned. `.github/scripts/release-plan.py` stops a pull request and a release whose `SUPublicEDKey` is not the key of the releases already published. Nothing has shipped with Sparkle yet: 1.8.0 is the first version with it; 1.7.0 copies reach it with their own updater, and earlier versions install it by hand once. The READMEs' privacy text says the same as step 9 |
+| Update key (owner only) | Set up on 2026-10-02: the key pair is in the owner's login keychain (account `menu-pulse`), its public key is `SUPublicEDKey` in `Packaging/Info.plist`, and its private key is the repository secret `SPARKLE_PRIVATE_KEY`. Agents never run `generate_keys` or `sign_update` and never handle the private key. The owner keeps an offline backup: ad-hoc builds have no second way to trust an update, so losing the key strands every installed copy. To show the public key or export the private key again (owner only): `make sparkle`, then `build/sparkle/2.10.0/bin/generate_keys --account menu-pulse` (add `-x <file>` outside the repository, with `umask 077`, to export; `gh secret set SPARKLE_PRIVATE_KEY -R hyunseop827/menu-pulse < <file>` stores it again; delete the file afterwards). Never create a new key for this app |
 
-These pull request checks do not build the DMG, compare the app files with the last release, or check the version against existing tags; only the release job on `main` does (it also requires some text under the notes heading). `main` has no branch protection, so GitHub blocks a merge only on conflicts. Until pull request checks cover this, run these release checks in step 6a and again right before `gh pr merge`, each time right after `git fetch --tags origin`:
+The pull request checks run the release plan (`release-plan.py --check`). It fails when the version is older than an existing tag or release, when the version is already released and the app files changed since its tag, when an unreleased tag of that version is on another commit, when the notes have no text under the heading, or when the update key differs from the published releases'. It does not build the DMG or the update feed, and it passes while the highest tag's release is still a draft. `main` has no branch protection, so GitHub blocks a merge only on conflicts. Run these release checks in step 6a and again right before `gh pr merge`, each time right after `git fetch --tags origin`:
 
 - The release of the highest tag (`git tag --list 'v*' --sort=-v:refname | head -n 1`) must be finished: `gh release view <tag> --json isDraft --jq .isDraft` prints `false`. If it prints `true` or finds no release, finish that release first (step 7) and merge nothing until it is done.
-- For an app change, the version must be higher than that highest tag.
-- If the current version is already tagged, `git diff --quiet vX.Y.Z -- Sources Packaging Makefile` must exit 0 and `git ls-files --others --exclude-standard -- Sources Packaging Makefile` must print nothing; otherwise the version must be raised (step 2). Any other non-zero exit means the comparison itself failed: stop and fix that first.
+- `GH_TOKEN=$(gh auth token) python3 .github/scripts/release-plan.py --check` passes (the plan the pull request runs).
+- `git ls-files --others --exclude-standard -- Sources Packaging Makefile` prints nothing that belongs to the change but is not committed; the plan sees only committed files.
 
-If a released version slips through anyway, the `main` run fails in "Check version and release state" before its tag step; handle it as step 7 says.
+If a released version slips through anyway, the pull request's "Check version and release plan" step fails, and on `main` the release job's "Check version and release state" fails before its tag step; handle it as step 7 says.
 
 ### 1. Start
 

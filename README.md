@@ -18,8 +18,6 @@ A compact CPU and RAM readout for your Mac's menu bar. Temperature and disk usag
 
 Open the DMG and drag **Menu Pulse** to **Applications**. You do not need to clone or keep this repository to use the app.
 
-To update, click **Check for Updates…** in Settings. When a newer version exists, Menu Pulse asks first, then downloads it from GitHub, checks the release's SHA-256 checksum and the app's code signature, replaces itself, and restarts with Settings open. If it cannot replace itself, for example while it runs from the DMG, it offers the download page instead. Versions before 1.7.0 do not have this button; replace the app with the one from the new DMG once.
-
 **The app is ad-hoc signed and not notarized by Apple.** If macOS blocks the first launch, use **System Settings → Privacy & Security → Open Anyway** after trying to open it. See [Apple's instructions](https://support.apple.com/guide/mac-help/mh40616/mac).
 
 See the [release notes](https://github.com/hyunseop827/menu-pulse/releases) for changes in each version.
@@ -34,6 +32,13 @@ shasum -a 256 -c --ignore-missing SHA256SUMS.txt
 ```
 
 </details>
+
+### Updating
+
+- Click **Check for Updates…** in Settings to check right away. While it is running, Menu Pulse also checks once a day on its own.
+- When there is a newer version, it shows what changed and asks. Only when you choose **Install Update** does it download the new version, verify its signature, replace the app, and reopen it. It never installs without asking.
+- Keep the app in Applications. An app opened inside the DMG cannot update itself.
+- **If you use 1.7.0**, its own **Check for Updates…** installs this version. Versions before 1.7.0 have no updater: replace the app with the one from the new DMG once.
 
 ## Features
 
@@ -67,8 +72,10 @@ Click the menu bar item to open Settings, which shows the installed version and 
 
 - Native Objective-C/AppKit; no Electron, web view, chart, or Dock icon
 - One timer reads only enabled metrics; periodic reads pause while displays are asleep or another user's session is active
-- No background network requests, telemetry, crash-reporting SDK, history, or metric log; Menu Pulse contacts GitHub only when you click **Check for Updates…**
-- Stores only display choices, refresh intervals, temperature unit, the Settings window and menu bar item positions, and the one-time login prompt marker
+- No accounts and no usage tracking; no crash-reporting SDK, history, or metric log
+- The only thing the app uses the internet for is the update check. Once a day while it is running, and when you choose **Check for Updates…**, it reads the latest release's list of updates (`appcast.xml`) from GitHub. Nothing about your Mac or its readings is sent
+- The new version is downloaded from GitHub only when you choose to install it, and it is checked against the signing key (EdDSA) inside the app before it is opened. Updates are handled by [Sparkle](https://sparkle-project.org)
+- Stores only display choices, refresh intervals, temperature unit, the Settings window and menu bar item positions, and the one-time login prompt marker. Sparkle keeps a little state in the app's preferences (when it last checked, a skipped version, window positions)
 
 Resource use depends on your Mac, macOS version, enabled metrics, and refresh intervals. The 1-second TEMP option performs the most sensor work and is best used for short checks. See [Benchmark](#benchmark) to measure a specific checkout with its test conditions recorded.
 
@@ -81,10 +88,10 @@ Turn off **Open at login** in Settings, click **Quit**, then move `/Applications
 ```sh
 make app      # Build the app in build/release
 make check    # Check syntax, metadata, static analysis, tests, and the app
-make dmg      # Create dist/MenuPulse.dmg and SHA256SUMS.txt
+make dmg      # Create the DMGs, the ZIP, and SHA256SUMS.txt in dist
 ```
 
-Xcode Command Line Tools are required. Building and testing do not install the app or register login items. Test executables run in a temporary directory and are removed afterward.
+Xcode Command Line Tools are required. The first build downloads Sparkle 2.10.0 from its GitHub release, checks it against a pinned SHA-256, and keeps it in `build/sparkle`. Building and testing do not install the app or register login items. Test executables run in a temporary directory and are removed afterward.
 
 ## Benchmark
 
@@ -119,3 +126,5 @@ Menu Pulse is developed with AI coding agents, including Claude Code, under the 
 ## License
 
 [MIT](LICENSE) — use, modify, and distribute freely; provided as-is without warranty.
+
+Menu Pulse updates itself with [Sparkle](https://github.com/sparkle-project/Sparkle) (MIT); its license ships inside the app as `ThirdPartyNotices.txt`.

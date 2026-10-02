@@ -208,8 +208,10 @@ SCENARIO="$(IFS=/; echo "${SCENARIO_PARTS[*]}")"
 # The command-line pairs select the scenario through NSArgumentDomain, so stored
 # settings do not affect the measurement. CFFIXED_USER_HOME points the app's
 # home folder (the DISK volume and legacy login-item lookup) at a temporary one.
+# Sparkle stays off, so the measurement makes no network requests.
 CFFIXED_USER_HOME="$BENCHMARK_HOME" \
   MENU_PULSE_DISABLE_LOGIN_ITEM_MIGRATION=1 \
+  MENU_PULSE_DISABLE_UPDATES=1 \
   "$BIN_PATH" \
   -showCPU "$SHOW_CPU_ARGUMENT" \
   -showRAM "$SHOW_RAM_ARGUMENT" \

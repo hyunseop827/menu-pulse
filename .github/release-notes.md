@@ -1,6 +1,6 @@
-# v1.7.0
+# v1.8.0
 
-- Settings now has **Check for Updates…**, which replaces **View Latest Release**. It tells you when Menu Pulse is up to date, or asks before installing a newer version.
-- Updates download from GitHub, are checked against the release's SHA-256 checksum and code signature, replace the app in place, and restart Menu Pulse with Settings open.
-- Menu Pulse contacts GitHub only when you click **Check for Updates…**.
-- Install this version from the DMG one more time; later versions can be installed from Settings.
+- Menu Pulse now checks for updates once a day and shows what changed in a new version; it installs one only when you choose **Install Update**.
+- **Check for Updates…** in Settings opens the same update window, and every update must carry the project's EdDSA signature before it is installed.
+- To check for updates, Menu Pulse reads the latest release's update list on GitHub once a day; it sends no usage data.
+- Menu Pulse 1.7.0 updates to this version with its own **Check for Updates…**.
