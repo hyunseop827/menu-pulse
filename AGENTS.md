@@ -98,7 +98,7 @@ The owner develops by asking an agent for changes. The agent prepares the versio
 | Release assets | `MenuPulse.dmg`, `MenuPulse.zip`, `SHA256SUMS.txt`; the in-app updater downloads the last two from the release tagged `vX.Y.Z` and expects `Menu Pulse.app` inside the ZIP |
 | In-app updates | Not Sparkle: `MPUpdater` checks GitHub only when the user clicks Check for Updates…, so step 9 does not apply yet |
 
-These pull request checks do not build the DMG, compare the app files with the last release, or check the version against existing tags; only the release job on `main` does (it also requires some text under the notes heading). `main` has no branch protection, so GitHub blocks a merge only on conflicts. Until pull request checks cover this, run these release checks in step 6a and again right before `gh pr merge`:
+These pull request checks do not build the DMG, compare the app files with the last release, or check the version against existing tags; only the release job on `main` does (it also requires some text under the notes heading). `main` has no branch protection, so GitHub blocks a merge only on conflicts. Until pull request checks cover this, run these release checks in step 6a and again right before `gh pr merge`, each time right after `git fetch --tags origin`:
 
 - The release of the highest tag (`git tag --list 'v*' --sort=-v:refname | head -n 1`) must be finished: `gh release view <tag> --json isDraft --jq .isDraft` prints `false`. If it prints `true` or finds no release, finish that release first (step 7) and merge nothing until it is done.
 - For an app change, the version must be higher than that highest tag.
