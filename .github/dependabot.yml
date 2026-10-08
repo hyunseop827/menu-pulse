@@ -1,0 +1,10 @@
+# Keeps the actions pinned by commit SHA in .github/workflows up to date: one pull request a week when a new release
+# of an action is out, titled with the `ci:` prefix AGENTS.md asks for. The pull request's checks run as usual.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci

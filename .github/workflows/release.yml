@@ -9,13 +9,14 @@
 # - "Re-run failed jobs" finishes a run that stopped half way, and checks the downloads of a release this commit
 #   already published.
 #
-# In-app updates (Sparkle). appcast.xml has one item: this version, its build number (CFBundleVersion, the CI run
-# number), the release notes, and the versioned DMG with an EdDSA signature made with the repository secret
+# In-app updates (Sparkle). appcast.xml has one item: this version, its build number (CFBundleVersion, the run number
+# plus BUILD_OFFSET), the release notes, and the versioned DMG with an EdDSA signature made with the repository secret
 #   SPARKLE_PRIVATE_KEY   the private key, base64, as `generate_keys --account menu-pulse -x` exports it. Only the
 #                         owner creates and stores it; ci.yml passes it by name, and only the step that signs gets
 #                         its value. The key check only learns whether it is set.
 # A run that is going to publish stops
-#   - in the plan, when SUPublicEDKey is not the key of the published releases that shipped with one;
+#   - in the plan, when SUPublicEDKey is not the key of the published releases that shipped with one, or when another
+#     tag's release is unfinished (a draft, or no release at all);
 #   - right after the plan, before anything is built or tagged, when the secret is missing or SUPublicEDKey is not a
 #     real public key (the placeholder);
 #   - after the build and before the tag, when the build number is not higher than the published feed's (or that
@@ -36,19 +37,28 @@ on:
 permissions:
   contents: read
 
+# The released app's CFBundleVersion (APP_BUILD) is the run number plus this offset. It stays 0 unless the run numbers
+# restarted (the workflow file was renamed or moved, or the repository was recreated): then the build-number check
+# below stops the release before the tag, and the owner sets this, in a commit, to a number larger than the published
+# feed's sparkle:version, so that the next build is higher again (AGENTS.md, 'Build number').
+env:
+  BUILD_OFFSET: 0
+
 jobs:
   release:
-    runs-on: macos-latest
+    # macos-26 with .github/scripts/select-xcode.sh, like ci.yml: the newest released Xcode 26.x and nothing newer, so
+    # an image change cannot silently change the SDK or the compiler the -Werror build sees.
+    runs-on: macos-26
     timeout-minutes: 30
     permissions:
       contents: write # the version tag, gh release create / upload / edit
     concurrency:
-      group: repository-release
+      group: menu-pulse-release
       cancel-in-progress: false
 
     steps:
       - name: Checkout validated commit
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
@@ -81,16 +91,22 @@ jobs:
           fi
           echo "OK  SPARKLE_PRIVATE_KEY is set, SUPublicEDKey $key"
 
-      # The run number becomes CFBundleVersion, which Sparkle compares.
+      # Shared with ci.yml; make then builds with the Xcode chosen here. Also for runs that only verify a release
+      # again: that step runs ed25519-verify.swift with xcrun.
+      - name: Select Xcode (newest released 26.x)
+        run: ./.github/scripts/select-xcode.sh
+
+      # The run number plus BUILD_OFFSET (see the top) becomes CFBundleVersion, which Sparkle compares. GitHub
+      # expressions cannot add, so the shell does.
       - name: Build DMG
         if: steps.prepare.outputs.publish == 'true'
-        env:
-          APP_BUILD: ${{ github.run_number }}
-        run: make dmg APP_BUILD="$APP_BUILD"
+        run: |
+          [[ "$BUILD_OFFSET" =~ ^[0-9]+$ ]] || { echo "::error::BUILD_OFFSET must be a non-negative integer ('$BUILD_OFFSET')."; exit 1; }
+          make dmg APP_BUILD="$((GITHUB_RUN_NUMBER + BUILD_OFFSET))"
 
       # Sparkle offers a build only when its number is higher than the installed copy's. The run number only grows,
-      # unless ci.yml is renamed or recreated. So, before anything is tagged, compare with the feed installed copies
-      # read now:
+      # unless the workflow file is renamed or moved or the repository is recreated; BUILD_OFFSET bridges that. So,
+      # before anything is tagged, compare with the feed installed copies read now:
       #   200 with an integer sparkle:version  this build must be higher
       #   404, no release with Sparkle yet     the first Sparkle release (older releases have no appcast.xml)
       #   404, a release with Sparkle is out   stop: the number installed copies compare with is unknown
@@ -119,26 +135,35 @@ jobs:
           previous="$(xmllint --xpath 'string(//item/*[local-name()="version"])' "$published" 2> /dev/null || true)"
           [[ "$previous" =~ ^[0-9]+$ ]] || fail "Could not read sparkle:version from the published appcast.xml ('$previous')."
           if (( 10#$build <= 10#$previous )); then
-            fail "Build number $build is not higher than the published release's ($previous), so installed copies would not see this version as an update. Check whether the CI run number restarted (for example after renaming ci.yml)."
+            fail "Build number $build is not higher than the published release's ($previous), so installed copies would not see this version as an update. The CI run number restarted (the workflow file was renamed or moved, or the repository was recreated): the owner sets BUILD_OFFSET in release.yml to a number larger than $previous (AGENTS.md, 'Build number'). Nothing is tagged yet, so the next run on main releases this version."
           fi
           echo "OK  build number $build > published $previous"
 
+      # Sparkle's sign_update, from the archive `make sparkle` unpacked for the build. A step of its own, without the
+      # key, so that make never runs with the key in its environment.
+      - name: Locate Sparkle's tools
+        id: sparkle
+        if: steps.prepare.outputs.publish == 'true'
+        run: echo "bin=$(make -s print-sparkle-bin)" >> "$GITHUB_OUTPUT"
+
       # Before the tag, so a key that does not match SUPublicEDKey never leaves a tag behind. The item points at the
-      # versioned DMG, which later releases never replace.
+      # versioned DMG, which later releases never replace. The key reaches this one program and nothing else.
       - name: Create the update feed
         if: steps.prepare.outputs.publish == 'true'
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          SPARKLE_BIN: ${{ steps.sparkle.outputs.bin }}
           RELEASE_TAG: ${{ steps.prepare.outputs.tag }}
           VERSION: ${{ steps.prepare.outputs.version }}
         run: |
-          set -euo pipefail
-          sparkle_bin="$(make -s print-sparkle-bin)"
-          SPARKLE_BIN="$sparkle_bin" ./.github/scripts/make-appcast.sh \
+          ./.github/scripts/make-appcast.sh \
             "build/release/Menu Pulse.app" "dist/MenuPulse-$VERSION.dmg" \
             "https://github.com/$GITHUB_REPOSITORY/releases/download/$RELEASE_TAG/MenuPulse-$VERSION.dmg" \
             "$RUNNER_TEMP/menu-pulse-appcast-notes.md" dist/appcast.xml
-          cat dist/appcast.xml
+
+      - name: Show the update feed
+        if: steps.prepare.outputs.publish == 'true'
+        run: cat dist/appcast.xml
 
       # Only after the build and the feed are checked, so a failure never leaves a tag behind. The token is handed to
       # this one git command (the checkout keeps no credentials), the way actions/checkout authenticates.
@@ -245,20 +270,22 @@ jobs:
           [[ $verified == 0 ]] || fail "The appcast.xml signature does not verify with SUPublicEDKey (exit $verified)."
 
           # SUFeedURL and the README link read the latest release. This release must be the latest one (an older
-          # version stops in the plan), but GitHub can take a few seconds to report it after publishing.
-          for attempt in 1 2 3 4 5 6; do
-            latest_tag="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.tag_name' || true)"
-            if [[ "$latest_tag" == "$RELEASE_TAG" ]] &&
-              curl -fsSL -o latest-appcast.xml \
-                "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/appcast.xml" &&
-              cmp -s latest-appcast.xml appcast.xml &&
-              curl -fsSL -o latest.dmg "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/MenuPulse.dmg" &&
-              cmp -s latest.dmg MenuPulse.dmg; then
+          # version stops in the plan), but GitHub can take a few minutes to report it after publishing (about 2.5
+          # minutes on 2026-10-02), so this asks every 30 seconds for up to about 5 minutes. Without -f, so the status
+          # is read; curl prints 000 when there was no answer.
+          latest="https://github.com/$GITHUB_REPOSITORY/releases/latest/download"
+          for attempt in {1..10}; do
+            latest_tag="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.tag_name' 2> /dev/null || true)"
+            feed_status="$(curl -sSL -o latest-appcast.xml -w '%{http_code}' "$latest/appcast.xml" || true)"
+            dmg_status="$(curl -sSL -o latest.dmg -w '%{http_code}' "$latest/MenuPulse.dmg" || true)"
+            echo "attempt $attempt of 10: latest release '$latest_tag', appcast.xml HTTP $feed_status, MenuPulse.dmg HTTP $dmg_status"
+            if [[ "$latest_tag" == "$RELEASE_TAG" && "$feed_status" == 200 && "$dmg_status" == 200 ]] &&
+              cmp -s latest-appcast.xml appcast.xml && cmp -s latest.dmg MenuPulse.dmg; then
               break
             fi
-            if [[ $attempt == 6 ]]; then
-              fail "The latest release is '$latest_tag', not $RELEASE_TAG, or releases/latest/download does not serve this release's appcast.xml and MenuPulse.dmg."
+            if [[ $attempt == 10 ]]; then
+              fail "After $attempt attempts the latest release is '$latest_tag', not $RELEASE_TAG, or releases/latest/download does not serve this release's appcast.xml (HTTP $feed_status) and MenuPulse.dmg (HTTP $dmg_status). $RELEASE_TAG is already published; re-run the failed job on the same commit (gh run rerun <run-id> --failed), which only verifies again."
             fi
-            sleep $((attempt * 10))
+            sleep 30
           done
           echo "OK  $RELEASE_TAG: assets, appcast.xml (build $feed_build, signature verified), and the latest links"

@@ -6,8 +6,8 @@ version tags and GitHub releases, and writes the decision to $GITHUB_OUTPUT.
 
     python3 .github/scripts/release-plan.py           the release job's decision
     python3 .github/scripts/release-plan.py --check   validation only; CI runs it on every pull request and push, so
-                                                      a missing version bump or notes header, or a changed update
-                                                      key, shows up before the merge
+                                                      a missing version bump or notes header, a changed update key,
+                                                      or an unfinished release shows up before the merge
 
 Run it from the repository root after `git fetch --tags origin` (it needs gh) to see what CI would do with the
 current commit; without GITHUB_OUTPUT it prints the decision instead of writing it.
@@ -88,6 +88,18 @@ for known in set(tags) | {release["tag_name"] for release in releases}:
     if known.startswith("v") and SEMVER.fullmatch(known[1:]) and version_tuple(known[1:]) > version_tuple(version):
         fail(f"{tag} is older than the existing {known}; raise the version in {INFO_PLIST}.")
 
+# An unfinished release blocks everything else: once a newer tag exists it can no longer be finished (AGENTS.md,
+# step 7). A tag is finished when a published release carries its name. Pull requests run with a token that sees no
+# drafts, so for them a draft reads as "no release", which counts as unfinished too. This version's own tag is judged
+# below, so a re-run of the commit that made it still finishes it.
+finished = {release["tag_name"] for release in releases if not release["draft"]}
+unfinished = sorted((known for known in tags if known != tag and SEMVER.fullmatch(known[1:]) and known not in finished),
+                    key=lambda known: version_tuple(known[1:]))
+if unfinished:
+    fail(f"The release of {', '.join(unfinished)} is unfinished: no published release carries that tag (it is a draft, "
+         "or there is none this token can see). Finish it first with 'Re-run failed jobs' on its commit's run "
+         "(AGENTS.md, step 7); merge and release nothing until it is done.")
+
 # In-app updates (Sparkle). An installed copy accepts an update only when its signature fits the SUPublicEDKey that
 # copy carries; the app is ad-hoc signed, so there is no second way for it to trust one. A release with another key
 # would pass every other check and then be refused by every installed copy. So this commit's key must be the key of
@@ -95,10 +107,11 @@ for known in set(tags) | {release["tag_name"] for release in releases}:
 # has one that shipped with the placeholder.
 current_key = update_key(Path(INFO_PLIST).read_bytes())
 sparkle_release = ""  # the newest published release, other than this version, that shipped with a key
-published = [release for release in releases
-             if not release["draft"] and release["tag_name"] != tag
-             and release["tag_name"].startswith("v") and SEMVER.fullmatch(release["tag_name"][1:])]
-for release in sorted(published, key=lambda item: version_tuple(item["tag_name"][1:]), reverse=True):
+published = sorted((release for release in releases
+                    if not release["draft"] and release["tag_name"] != tag
+                    and release["tag_name"].startswith("v") and SEMVER.fullmatch(release["tag_name"][1:])),
+                   key=lambda item: version_tuple(item["tag_name"][1:]), reverse=True)  # newest first
+for release in published:
     name = release["tag_name"]
     if name not in tags:
         fail(f"Release {name} has no local tag, so its update key cannot be checked. Run `git fetch --tags origin`.")
@@ -116,6 +129,17 @@ for release in sorted(published, key=lambda item: version_tuple(item["tag_name"]
              "copies only accept updates signed with their own key, so releasing another key would strand every "
              "copy already installed. Only the owner changes this value.")
     sparkle_release = sparkle_release or name
+if sparkle_release:
+    print(f"OK  SUPublicEDKey is the key {sparkle_release} shipped with.")
+
+# The notes become the release's text and Sparkle's update window. The same text as the latest release's usually
+# means they were not written; a maintenance release may repeat them, so this only warns.
+if published:
+    latest = published[0]["tag_name"]
+    shown = subprocess.run(["git", "show", f"refs/tags/{latest}:{NOTES}"], capture_output=True, text=True)
+    if shown.returncode == 0 and "\n".join(shown.stdout.splitlines()[1:]).strip() == body:
+        print(f"::warning::{NOTES} has the same text as the notes of {latest}. Say what users will notice since "
+              f"{latest}, unless this maintenance release really repeats them.")
 
 tag_sha = git("rev-parse", f"refs/tags/{tag}^{{commit}}") if tag in tags else ""
 matching = [release for release in releases if release["tag_name"] == tag]
