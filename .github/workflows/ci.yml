@@ -9,26 +9,44 @@ on:
 permissions:
   contents: read
 
+# A newer push cancels a pull request's run, but never a run on main (its release job may be half way).
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
 jobs:
   validate:
-    runs-on: macos-latest
+    # macos-26 is the Apple Silicon image with Xcode 26.x installed side by side as /Applications/Xcode_<version>.app;
+    # .github/scripts/select-xcode.sh picks the newest released 26.x and nothing newer, so a change of the image cannot
+    # silently change the SDK or the compiler the -Werror build sees (macos-latest would):
+    # https://github.com/actions/runner-images/blob/main/images/macos/macos-26-arm64-Readme.md
+    runs-on: macos-26
     timeout-minutes: 30
 
     steps:
       # The tags let the release plan compare the update key with the releases already published.
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           fetch-tags: true
           persist-credentials: false
 
-      # The same decision the release job makes, without publishing: a missing version bump or notes header, or an
-      # update key that differs from the published releases', fails before the merge.
+      # The same decision the release job makes, without publishing: a missing version bump or notes header, an
+      # update key that differs from the published releases', or a tag whose release is unfinished, fails before the
+      # merge.
       - name: Check version and release plan
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 .github/scripts/release-plan.py --check
+
+      # Shared with release.yml; make then builds with the Xcode chosen here.
+      - name: Select Xcode (newest released 26.x)
+        run: ./.github/scripts/select-xcode.sh
 
       - name: Check, build, and test
         run: make check
