@@ -59,6 +59,8 @@ TEMP supports Celsius and Fahrenheit and shows the hottest component sensor the 
 
 Click the menu bar item to open Settings, which shows the installed version and **Check for Updates…**. If the item is hidden, for example behind the camera notch, open Menu Pulse again from Applications to show Settings. Close Settings with **⌘W** or **Esc**; it reopens where you left it. First launch asks about **Open at login** once; you can change it in Settings. **Reset Defaults restores the metric defaults and turns Open at login on.** Reset and Quit require confirmation; quitting preserves your login setting.
 
+The menu bar item and the Settings window follow the system appearance, light or dark.
+
 <details>
 <summary>Settings screenshot</summary>
 
